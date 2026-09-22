@@ -61,11 +61,18 @@ def _cliente_r2():
         aws_access_key_id=R2_ACCESS_KEY_ID,
         aws_secret_access_key=R2_SECRET_ACCESS_KEY,
         region_name="auto",
-        # request_checksum_calculation="when_required" evita que boto3
-        # (>=1.36) mande por defecto un checksum CRC32 en cada PutObject
-        # -- versiones de R2/boto3 más viejas que las probadas acá
-        # pueden rechazarlo. No tiene efecto negativo si no hace falta.
-        config=Config(signature_version="s3v4", request_checksum_calculation="when_required"),
+        # NOTA: antes acá había request_checksum_calculation="when_required"
+        # en el Config, pensado para evitar que boto3 (>=1.36) mande por
+        # defecto un checksum CRC32 que R2 podía rechazar. Ese parámetro
+        # NO EXISTE en botocore <1.36 -- y como requirements.txt fija
+        # boto3==1.35.36, botocore SIEMPRE resuelve por debajo de 1.36
+        # (restricción propia de esa versión de boto3), así que el
+        # parámetro nunca puede estar disponible. Con esa combinación de
+        # versiones, Config(...) tiraba TypeError en cada llamada -- 500
+        # en /health y en cualquier endpoint que tocara R2. Se saca acá;
+        # si en algún momento se actualiza boto3 a >=1.36, evaluar si
+        # hace falta volver a agregarlo (R2 no debería necesitarlo).
+        config=Config(signature_version="s3v4"),
     )
 
 
