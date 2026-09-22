@@ -159,13 +159,15 @@ módulos, conflicto de versiones `numpy`/`pgmpy`, y un parámetro de
   error. Hoy no se dispara desde la UI real porque el formulario valida
   antes de mandar nada, así que no es urgente, pero quedó anotado para
   no perderlo (repo del frontend, no este).
-- **`almacenamiento_r2.py` del repo de producción (`api-vacunas`)
-  probablemente tiene el mismo bug de `Config(request_checksum_calculation=...)`**
-  que se corrigió acá (mismo archivo, mismo pin de `boto3`). Si ese
-  servicio no se redeployó desde que se escribió ese `Config`, puede
-  estar corriendo por casualidad con una versión de `botocore` que sí
-  lo soporta — pero el día que se redeploye por cualquier otro motivo,
-  se rompe igual que pasó acá. Aplicar el mismo fix ahí, sin apuro.
+- ~~`almacenamiento_r2.py` del repo de producción (`api-vacunas`)
+  probablemente tenía el mismo bug de `Config(request_checksum_calculation=...)`~~
+  — **corregido** (2026-09-22): se portaron los tres fixes de este repo
+  (`Config` sin el parámetro roto, `boto3==1.35.36` agregado a
+  `requirements.txt`, `almacenamiento_r2.py` sumado al `COPY` del
+  `Dockerfile`) y se pushearon a `api-vacunas` (commit `ec8e8a4`,
+  mergeado con un fix de Dockerfile que ya estaba en GitHub). No se
+  verificó `/health` de ese servicio en vivo porque no se tiene su URL
+  a mano en este repo.
 
 ## Pendiente / no cubierto en esta ronda de pruebas
 
