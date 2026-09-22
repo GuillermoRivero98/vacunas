@@ -1,0 +1,94 @@
+INSTRUCCIONES PARA INTEGRAR EL CAMINO B (red bayesiana) A api.py
+==================================================================
+
+Estos son los únicos cambios a hacer en tu repo (api-vacunas en GitHub).
+No se toca nada de lo que ya está en producción (Camino A sigue
+exactamente igual, en el mismo endpoint POST /calcular-orden).
+
+--------------------------------------------------------------------
+1. Archivos nuevos a subir al repo (raíz, junto a motor_probabilidades.py)
+--------------------------------------------------------------------
+  - red_bayesiana.py
+  - pipeline_bayesiano.py
+
+(No hace falta subir comparar_caminos.py ni generar_datos_sinteticos.py
+al repo de producción -- son herramientas de análisis/demo, no del
+servicio. Podés dejarlos en una carpeta aparte tipo /analisis en el
+repo, o simplemente no subirlos.)
+
+--------------------------------------------------------------------
+2. requirements.txt -- agregar una línea
+--------------------------------------------------------------------
+Agregar (versión ya probada en este entorno):
+
+    pgmpy==1.1.2
+
+--------------------------------------------------------------------
+3. api.py -- agregar el import y el endpoint nuevo
+--------------------------------------------------------------------
+
+Al lado de:
+
+    from motor_probabilidades import correr_pipeline, resultado_a_dict
+
+agregar:
+
+    from pipeline_bayesiano import correr_pipeline_bayesiano, resultado_bayesiano_a_dict
+
+Y, después del endpoint existente POST /calcular-orden (no lo toques),
+agregar este nuevo endpoint:
+
+    @app.post("/calcular-orden-bayesiano")
+    def calcular_orden_bayesiano(caso: CasoPaciente):
+        if not almacenamiento_r2.excel_disponible():
+            raise HTTPException(500, "No hay Excel histórico cargado todavía.")
+        try:
+            resultado = correr_pipeline_bayesiano(
+                almacenamiento_r2.descargar_historico(), caso.model_dump()
+            )
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+        return resultado_bayesiano_a_dict(resultado)
+
+NOTA IMPORTANTE: pipeline_bayesiano.correr_pipeline_bayesiano() recibe
+hoy un `path_excel` (string) en las pruebas locales, pero
+almacenamiento_r2.descargar_historico() devuelve un BytesIO (mismo
+patrón que ya usa correr_pipeline en el endpoint original). pandas
+acepta ambos en pd.read_excel(), así que no hace falta cambiar nada
+más -- pero probalo una vez desplegado, es el único punto de fricción
+real entre "anduvo local con un path" y "anda con el BytesIO de R2".
+
+--------------------------------------------------------------------
+4. Deploy
+--------------------------------------------------------------------
+  1. Subís los 2 archivos nuevos + el requirements.txt actualizado +
+     el api.py modificado a GitHub (interfaz web, como ya venís
+     trabajando).
+  2. Render detecta el push al repo conectado y redeploya solo.
+  3. El Excel histórico que ya está en R2 (el de producción, o el
+     simulado si querés probar con historico_vacunas_SIMULADO_presentacion.xlsx
+     subiéndolo vía POST /admin/actualizar-historico con tu
+     ADMIN_API_KEY) sirve para ambos caminos -- no hace falta ningún
+     bucket ni objeto nuevo en R2, ambos endpoints leen el mismo
+     archivo.
+  4. Cloudflare Pages (el frontend) NO necesita ningún cambio para
+     que el backend funcione -- /calcular-orden-bayesiano queda
+     disponible pero sin ninguna pantalla que lo llame todavía. Si
+     más adelante querés mostrarlo en la UI (aunque sea colapsado,
+     como hablamos), ahí sí hay que tocar api.ts + types.ts +
+     ResultadoView.tsx, pero eso es un paso aparte, no bloquea el
+     deploy del backend.
+
+--------------------------------------------------------------------
+5. Cómo probarlo una vez deployado (sin tocar el frontend)
+--------------------------------------------------------------------
+Con curl o Postman, contra tu URL de Render:
+
+    curl -X POST https://TU-SERVICIO.onrender.com/calcular-orden-bayesiano \
+      -H "Content-Type: application/json" \
+      -d '{"edad": 30, "comorbilidad": 0}'
+
+Debería devolver el mismo formato de JSON que ya conocés de
+/calcular-orden (orden_sugerido, vacunas con p_estimado e ic95, etc.),
+con "metodo": "red_bayesiana" como campo extra para distinguirlo.
