@@ -5,6 +5,7 @@ Endpoints:
   GET  /health                  -> chequeo de vida
   POST /calcular-orden          -> corre el pipeline completo y devuelve JSON
   POST /calcular-orden/reporte  -> igual, pero devuelve el PDF del reporte
+  POST /calcular-orden-bayesiano -> Camino B (red bayesiana), mismo formato
 
 El Excel histórico vive en Cloudflare R2 (ver almacenamiento_r2.py) --
 Render (plan gratis/starter) no garantiza disco persistente entre
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 
 import almacenamiento_r2
 from motor_probabilidades import correr_pipeline, resultado_a_dict
+from pipeline_bayesiano import correr_pipeline_bayesiano, resultado_bayesiano_a_dict
 from generar_reporte import generar_html, convertir_a_pdf
 
 app = FastAPI(title="Motor de orden de vacunación", version="0.1.0")
@@ -89,6 +91,20 @@ def calcular_orden(caso: CasoPaciente):
         raise HTTPException(400, str(e))
 
     return resultado_a_dict(resultado)
+
+
+@app.post("/calcular-orden-bayesiano")
+def calcular_orden_bayesiano(caso: CasoPaciente):
+    if not almacenamiento_r2.excel_disponible():
+        raise HTTPException(500, "No hay Excel histórico cargado todavía.")
+    try:
+        resultado = correr_pipeline_bayesiano(
+            almacenamiento_r2.descargar_historico(), caso.model_dump()
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+    return resultado_bayesiano_a_dict(resultado)
 
 
 @app.post("/calcular-orden/reporte")

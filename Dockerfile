@@ -23,7 +23,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY api.py motor_probabilidades.py generar_reporte.py almacenamiento_r2.py ./
+COPY api.py motor_probabilidades.py generar_reporte.py almacenamiento_r2.py red_bayesiana.py pipeline_bayesiano.py ./
 
 # El Excel histórico se monta como volumen o se sube vía
 # /admin/actualizar-historico -- no se hornea en la imagen.
