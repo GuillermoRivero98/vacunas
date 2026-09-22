@@ -141,25 +141,42 @@ módulos, conflicto de versiones `numpy`/`pgmpy`, y un parámetro de
 | Caso | Resultado |
 |---|---|
 | `POST /calcular-orden` sin el campo `comorbilidad` | `422` — error de validación de Pydantic/FastAPI (`"Field required"`) |
-| `POST /calcular-orden` con `comorbilidad: 5` (fuera de rango esperado 0/1) | `400` — `"No hay casos similares en el histórico con ese criterio de filtro"` (no rechaza el valor, simplemente no encuentra grupo similar) |
-| `POST /calcular-orden` con `edad: -5` | `200` — **no valida edad negativa**, devuelve un resultado "normal" con 47 casos similares (ver Limitaciones conocidas) |
+| `POST /calcular-orden` con `comorbilidad: 5` (fuera de rango 0/1) | `422` — `"Input should be 0 or 1"` (antes del fix: `400` con mensaje custom, ver más abajo) |
+| `POST /calcular-orden` con `edad: -5` | `422` — `"Input should be greater than or equal to 0"` (antes del fix: `200`, sin avisar) |
+| `POST /calcular-orden` con `edad: 150` | `422` — `"Input should be less than or equal to 120"` |
 | `POST /admin/actualizar-historico` sin header `X-API-Key` | `401` — `"API key inválida o faltante"` |
 | `POST /admin/actualizar-historico` con API key incorrecta | `401` — `"API key inválida o faltante"` |
 
 ## Limitaciones conocidas (no bloquean la demo)
 
-- ~~`CasoPaciente` no valida rangos~~ — **corregido** (2026-09-22):
-  `edad` ahora usa `Field(ge=0, le=120)` y `comorbilidad` usa
-  `Literal[0, 1]` en `api.py`. Los dos casos de la tabla de arriba
-  (`comorbilidad: 5`, `edad: -5`) ahora devuelven `422` de validación
-  automática en lugar de `400`/`200` — falta re-desplegar y re-probar
-  contra el servicio en vivo para confirmarlo (código cambiado
-  localmente todavía no pusheado).
+- ~~`CasoPaciente` no valida rangos~~ — **corregido y verificado en
+  producción** (2026-09-22): `edad` usa `Field(ge=0, le=120)` y
+  `comorbilidad` usa `Literal[0, 1]` en `api.py`. Confirmado contra el
+  deploy de Render post-redeploy (tabla de arriba).
+- **`api.ts` (frontend) no maneja bien el `422` de Pydantic**: el
+  `detail` de un error de validación viene como *array* de objetos, no
+  como string — si el frontend espera string se rompe el manejo de
+  error. Hoy no se dispara desde la UI real porque el formulario valida
+  antes de mandar nada, así que no es urgente, pero quedó anotado para
+  no perderlo (repo del frontend, no este).
+- **`almacenamiento_r2.py` del repo de producción (`api-vacunas`)
+  probablemente tiene el mismo bug de `Config(request_checksum_calculation=...)`**
+  que se corrigió acá (mismo archivo, mismo pin de `boto3`). Si ese
+  servicio no se redeployó desde que se escribió ese `Config`, puede
+  estar corriendo por casualidad con una versión de `botocore` que sí
+  lo soporta — pero el día que se redeploye por cualquier otro motivo,
+  se rompe igual que pasó acá. Aplicar el mismo fix ahí, sin apuro.
 
 ## Pendiente / no cubierto en esta ronda de pruebas
 
-- CORS real desde el dominio del frontend (Cloudflare Pages) — solo se
-  probó con `curl`, no desde navegador con origen cruzado.
+- **CORS real desde el dominio del frontend (Cloudflare Pages)** — solo
+  se probó con `curl`, no desde navegador con origen cruzado. Si la
+  demo va a mostrar el frontend pegándole a este servicio, conviene
+  probarlo antes, no en vivo.
+- **Camino B no conectado a la UI todavía** — hoy `/calcular-orden-bayesiano`
+  solo se probó por `curl`/Postman. Si la presentación va a mostrar la
+  comparación A vs B en pantalla (no solo explicarla), hace falta tocar
+  `api.ts` + `types.ts` + `ResultadoView.tsx` en el repo del frontend.
 - Latencia/cold start de Render en plan gratuito (el primer request tras
   inactividad puede tardar bastante más que los siguientes).
 - Carga concurrente / múltiples requests simultáneos.
