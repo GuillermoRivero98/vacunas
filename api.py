@@ -17,11 +17,13 @@ import os
 import shutil
 import tempfile
 
+from typing import Literal
+
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import almacenamiento_r2
 from motor_probabilidades import correr_pipeline, resultado_a_dict
@@ -60,8 +62,13 @@ def verificar_api_key(x_api_key: str = Header(None)):
 
 
 class CasoPaciente(BaseModel):
-    edad: int
-    comorbilidad: int  # 0 o 1
+    # ge/le acotan el rango de edad a algo clínicamente razonable;
+    # Literal[0, 1] rechaza cualquier valor de comorbilidad que no sea
+    # exactamente 0 o 1 -- antes ambos aceptaban cualquier entero
+    # (incluida edad negativa) sin avisar, ver README, sección
+    # "Limitaciones conocidas".
+    edad: int = Field(ge=0, le=120)
+    comorbilidad: Literal[0, 1]
     vacunas_previas: list[str] | None = None
 
 

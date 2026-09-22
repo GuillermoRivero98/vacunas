@@ -148,12 +148,13 @@ módulos, conflicto de versiones `numpy`/`pgmpy`, y un parámetro de
 
 ## Limitaciones conocidas (no bloquean la demo)
 
-- **`CasoPaciente` no valida rangos**: `edad` acepta negativos y
-  `comorbilidad` acepta cualquier entero (no solo 0/1). No rompe nada,
-  pero un typo en la demo (ej. `-5` sin querer) no da ningún aviso, solo
-  un resultado "normal" con menos casos similares. Se podría agregar
-  `Field(ge=0, le=120)` y `Literal[0, 1]` en `api.py` si se quiere
-  blindar antes de mostrarlo en vivo.
+- ~~`CasoPaciente` no valida rangos~~ — **corregido** (2026-09-22):
+  `edad` ahora usa `Field(ge=0, le=120)` y `comorbilidad` usa
+  `Literal[0, 1]` en `api.py`. Los dos casos de la tabla de arriba
+  (`comorbilidad: 5`, `edad: -5`) ahora devuelven `422` de validación
+  automática en lugar de `400`/`200` — falta re-desplegar y re-probar
+  contra el servicio en vivo para confirmarlo (código cambiado
+  localmente todavía no pusheado).
 
 ## Pendiente / no cubierto en esta ronda de pruebas
 
