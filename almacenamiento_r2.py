@@ -34,7 +34,11 @@ R2_ACCOUNT_ID = os.environ.get("R2_ACCOUNT_ID")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "vacunas-historico")
-R2_OBJECT_KEY = "historico_vacunas.xlsx"
+R2_OBJECT_KEY = "historico_vacunas.xlsx"          # legacy (vacunas)
+R2_OBJECT_KEY_RTU = "historico_rtu.xlsx"           # RTU (inyecciones intravítreas)
+# Las dos claves conviven en el mismo bucket sin pisarse. Todas las
+# funciones de abajo reciben `clave` con default = legacy, así que el
+# código legacy existente (api.py) sigue funcionando sin cambios.
 
 
 def _variables_faltantes() -> list[str]:
@@ -76,31 +80,39 @@ def _cliente_r2():
     )
 
 
-def excel_disponible() -> bool:
-    """True si hay un Excel histórico cargado en R2. No lanza excepción
-    si las variables de entorno de R2 no están configuradas -- devuelve
-    False (mismo comportamiento que "no existe el archivo" de antes)."""
+def excel_disponible(clave: str = R2_OBJECT_KEY) -> bool:
+    """True si hay un Excel histórico cargado en R2 bajo `clave`. No
+    lanza excepción si las variables de entorno de R2 no están
+    configuradas -- devuelve False (mismo comportamiento que "no existe
+    el archivo" de antes)."""
+    return etag(clave) is not None
+
+
+def etag(clave: str = R2_OBJECT_KEY) -> str | None:
+    """ETag del objeto en R2 (cambia cada vez que se reemplaza el
+    archivo), o None si no existe o R2 no está configurado. Lo usa el
+    servicio RTU para saber si su modelo en memoria está desactualizado."""
     if _variables_faltantes():
-        return False
+        return None
     try:
-        _cliente_r2().head_object(Bucket=R2_BUCKET_NAME, Key=R2_OBJECT_KEY)
-        return True
+        r = _cliente_r2().head_object(Bucket=R2_BUCKET_NAME, Key=clave)
+        return str(r.get("ETag", "")).strip('"') or None
     except ClientError:
-        return False
+        return None
 
 
-def descargar_historico() -> io.BytesIO:
+def descargar_historico(clave: str = R2_OBJECT_KEY) -> io.BytesIO:
     """Descarga el Excel histórico desde R2 a memoria y devuelve un
     BytesIO listo para pd.read_excel(...). Se descarga fresco en cada
     llamada (igual que antes se leía fresco del disco en cada request
     -- sin cache para no arriesgar servir una versión vieja)."""
     buf = io.BytesIO()
-    _cliente_r2().download_fileobj(R2_BUCKET_NAME, R2_OBJECT_KEY, buf)
+    _cliente_r2().download_fileobj(R2_BUCKET_NAME, clave, buf)
     buf.seek(0)
     return buf
 
 
-def subir_historico(archivo) -> None:
+def subir_historico(archivo, clave: str = R2_OBJECT_KEY) -> None:
     """Sube (reemplaza) el Excel histórico en R2. `archivo` es un
     file-like object (p.ej. UploadFile.file de FastAPI)."""
-    _cliente_r2().upload_fileobj(archivo, R2_BUCKET_NAME, R2_OBJECT_KEY)
+    _cliente_r2().upload_fileobj(archivo, R2_BUCKET_NAME, clave)

@@ -1,0 +1,34 @@
+# --- Entornos virtuales de Python ---
+.venv/
+venv/
+env/
+
+# --- Caches de Python y de herramientas ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Datos generados por generar_datos_rtu.py (se regeneran con semilla fija) ---
+historico_rtu_SIMULADO.xlsx
+verdad_oculta_rtu_SIMULADO.xlsx
+
+# --- Archivos temporales de Excel/LibreOffice abiertos ---
+~$*.xlsx
+.~lock.*#
+
+# --- Reportes generados ---
+reporte*.html
+reporte*.pdf
+reporte*.docx
+
+# --- Secretos y configuración local (nunca al repo) ---
+.env
+.env.*
+
+# --- Editores y sistema operativo ---
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
