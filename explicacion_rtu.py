@@ -19,7 +19,9 @@ Salidas:
   - base_de_calculo: por fármaco, cuántos ciclos de ese fármaco (en la
     misma línea) hubo entre los K_BASE ojos más parecidos y cómo
     terminaron. Si hay pocos, se advierte.
-  - casos_similares: los N ojos más parecidos con su evolución.
+  - casos_similares: los N casos más parecidos con su evolución, con a
+    lo sumo UN ojo por paciente (los dos ojos de una persona no son
+    independientes). El resumen por fármaco sí usa todos los ojos.
   - discrepancias (T5.11): si la tasa de actividad OBSERVADA en esos
     vecinos difiere mucho de la p_activo que estima el modelo, se
     advierte (el modelo generaliza sobre todo el histórico; los vecinos
@@ -122,6 +124,21 @@ class IndiceCasos:
         orden = np.lexsort((self._ojo, self._pid, d))[:k]  # desempate determinístico
         return [(self.ojos[i], float(d[i])) for i in orden]
 
+    def _un_ojo_por_paciente(self, caso: dict, n: int) -> list[tuple[_Ojo, float]]:
+        """Los n casos más parecidos para MOSTRAR, con a lo sumo un ojo por
+        paciente: los dos ojos de una persona no son independientes (P5)
+        y mostrar ambos le quita lugar a casos distintos. Se queda el ojo
+        más parecido de cada paciente (desempate determinístico)."""
+        vistos, elegidos = set(), []
+        for o, d in self.vecinos(caso, len(self.ojos)):
+            if o.paciente_id in vistos:
+                continue
+            vistos.add(o.paciente_id)
+            elegidos.append((o, d))
+            if len(elegidos) == n:
+                break
+        return elegidos
+
     # ------------------------------------------------------------------
 
     def explicar(self, caso: dict, farmacos: list[str], linea: int, n_casos: int,
@@ -172,7 +189,7 @@ class IndiceCasos:
             "inyecciones_totales": o.inyecciones_totales,
             "semanas_seguimiento": o.semanas_seguimiento,
             "desenlace_final": o.desenlace_final,
-        } for o, dist in base[:n_casos]]
+        } for o, dist in self._un_ojo_por_paciente(caso, n_casos)]
 
         return {"base_de_calculo": base_de_calculo, "casos_similares": casos,
                 "advertencias": advertencias,

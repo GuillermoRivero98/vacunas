@@ -115,6 +115,8 @@ def test_vecinos_deterministicos_y_anonimos(historico):
                           "inyecciones_totales", "semanas_seguimiento", "desenlace_final"}
     distancias = [c["distancia"] for c in a["casos_similares"]]
     assert distancias == sorted(distancias)
+    pacientes = [c["id"].rsplit("-", 1)[0] for c in a["casos_similares"]]
+    assert len(pacientes) == len(set(pacientes)), "un solo ojo por paciente en el listado"
 
 
 # ------------------------------------------------------------------ API
