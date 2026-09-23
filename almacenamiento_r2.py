@@ -35,7 +35,11 @@ R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY")
 R2_BUCKET_NAME = os.environ.get("R2_BUCKET_NAME", "vacunas-historico")
 R2_OBJECT_KEY = "historico_vacunas.xlsx"          # legacy (vacunas)
-R2_OBJECT_KEY_RTU = "historico_rtu.xlsx"           # RTU (inyecciones intravítreas)
+R2_OBJECT_KEY_RTU = "historico_rtu.xlsx"           # RTU (inyecciones intravítreas), original
+R2_OBJECT_KEY_RTU_CSV = "historico_rtu.csv"        # RTU, copia CSV que lee el entrenamiento
+# La copia CSV se genera al subir el Excel (ya validado): leer .xlsx con
+# pandas es ~80x más lento que leer CSV, y en el plan gratuito de Render
+# eso se notaba en cada arranque.
 # Las dos claves conviven en el mismo bucket sin pisarse. Todas las
 # funciones de abajo reciben `clave` con default = legacy, así que el
 # código legacy existente (api.py) sigue funcionando sin cambios.

@@ -127,8 +127,8 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RNF-01 | Reproducibilidad | Mismas entradas y semillas → mismos resultados en cualquier máquina. | [HECHO] Verificado Linux vs Windows, fases 1 a 4. |
 | RNF-02 | Auditabilidad | El Camino A informa k, n y nivel de similitud usado; todo cálculo es trazable. | [HECHO] |
 | RNF-03 | Configurabilidad del protocolo | Cambiar un supuesto clínico = cambiar un valor en `supuestos_protocolo.py`. | [HECHO] |
-| RNF-04 | Latencia de `/rtu/sugerir-plan` con el servicio despierto | [PROPUESTA] < 2 s. | En local: 0.04 s por request; 7.6 s la primera vez (entrena). En Render: [PENDIENTE] T5.9 |
-| RNF-05 | Arranque en frío en Render | Documentar el tiempo real. Antes de una demo, llamar a `/health` para despertar el servicio. | [A CONFIRMAR] medir |
+| RNF-04 | Latencia de `/rtu/sugerir-plan` con el modelo entrenado | < 2 s | [HECHO] Render: 0.71 s medido desde Montevideo (incluye red). |
+| RNF-05 | Arranque en frío en Render | El entrenamiento no debe recaer en la consulta del médico. | Medido: 88.8 s en la primera consulta (entrenando desde Excel). Mitigado con lectura CSV y precalentamiento al arrancar; [PENDIENTE] volver a medir tras el deploy. Antes de usar el sistema, llamar a `/health` y esperar `rtu_modelo_entrenado: true`. |
 | RNF-06 | Memoria | La imagen con pgmpy y sus dependencias debe entrar en los recursos del plan de Render. | [A CONFIRMAR] qué recurso son los 10 GB informados (ver Q-05) y consumo real de RAM |
 | RNF-07 | Seguridad | Endpoints de administración con `X-API-Key`; secretos solo en variables de entorno; el Excel nunca queda público. | [HECHO] en legacy; replicar en RTU |
 | RNF-08 | Privacidad | Sin datos de pacientes reales en el repo ni en R2 hasta tener autorización formal. | Vigente |
@@ -158,7 +158,7 @@ flowchart LR
 |---|---|---|---|
 | GitHub | Repositorio del backend | `GuillermoRivero98/vacunas`, rama `main`. Cada push dispara el deploy en Render. | [HECHO] |
 | Render | Hosting del backend | Docker, plan gratuito, `https://vacunas-mwyr.onrender.com`. Límite informado en el panel: 10 GB (ver Q-05). | [HECHO] |
-| Cloudflare R2 | Almacenamiento del Excel histórico | Bucket por defecto `vacunas-historico`. Objetos: `historico_vacunas.xlsx` (legacy) e `historico_rtu.xlsx` (RTU). Acceso autenticado vía API S3 (boto3). | [HECHO] legacy; RTU [PENDIENTE] de subir (T5.9) |
+| Cloudflare R2 | Almacenamiento del Excel histórico | Bucket por defecto `vacunas-historico`. Objetos: `historico_vacunas.xlsx` (legacy), `historico_rtu.xlsx` (RTU, original) e `historico_rtu.csv` (RTU, copia que lee el entrenamiento; se genera al subir). Acceso autenticado vía API S3 (boto3). | [HECHO] |
 | Cloudflare Pages | Hosting del frontend | **Todavía no hay frontend.** Se construye en la fase 6 (React, despliegue con `wrangler`). Hoy el requisito de usar Cloudflare lo cumple R2. | [PENDIENTE] |
 
 ### 5.3 Variables de entorno (Render → Environment)
@@ -172,6 +172,7 @@ flowchart LR
 | `R2_BUCKET_NAME` | Bucket del Excel. | No (default `vacunas-historico`) |
 | `FRONTEND_ORIGINS` | Restringe CORS a orígenes separados por coma. | No (default `*`) |
 | `RTU_DATOS_SIMULADOS` | Si es `true`, la respuesta RTU advierte que los datos son simulados. Poner `false` recién con datos reales. | No (default `true`) |
+| `RTU_PRECALENTAR` | Si es `true`, entrena el modelo RTU en segundo plano al arrancar el servicio. | No (default `true`) |
 | `RTU_HISTORICO_LOCAL` | **Solo desarrollo:** ruta a un Excel RTU local en vez de R2. No configurarla en Render. | No |
 
 ### 5.4 Repos y servicios: cuál es cuál
@@ -387,7 +388,7 @@ Columnas mínimas que exige `motor_probabilidades.correr_pipeline`: `paciente_id
 | `esquema_rtu.py` | Validador del Excel RTU (T5.2) | — | [HECHO] |
 | `explicacion_rtu.py` | Casos similares por k-NN y chequeo de discrepancias (T5.10, T5.11) | estimación | [HECHO] |
 | `servicio_rtu.py` | Modelo en memoria con invalidación por ETag; arma la respuesta (T5.4, T5.5) | todos los anteriores, R2 | [HECHO] |
-| `tests/` , `pytest.ini`, `requirements-dev.txt` | 25 tests automáticos (T5.8) | — | [HECHO] |
+| `tests/` , `pytest.ini`, `requirements-dev.txt` | 28 tests automáticos (T5.8) | — | [HECHO] |
 
 Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu`, `esquema_rtu`, `explicacion_rtu` y `servicio_rtu`. Quedan afuera las herramientas offline (`generar_datos_rtu`, `evaluar_rtu`, `fase4_rtu`, `tests/`).
 
@@ -420,8 +421,8 @@ Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu
 | Método | Ruta | Descripción |
 |---|---|---|
 | POST | `/rtu/sugerir-plan` | Recomendación + casos similares (contrato en la fase 5, sección 13) |
-| POST | `/admin/rtu/actualizar-historico` | Valida el Excel RTU y, si es válido, lo sube a R2 y fuerza el reentrenamiento (`X-API-Key`) |
-| GET | `/health` | Suma `rtu_historico_cargado`, `rtu_modelo_entrenado` y `rtu_version_modelo` |
+| POST | `/admin/rtu/actualizar-historico` | Valida el Excel RTU y, si es válido, sube a R2 el original y una copia CSV, y reentrena en segundo plano (`X-API-Key`) |
+| GET | `/health` | Suma `rtu_historico_cargado`, `rtu_modelo_entrenado`, `rtu_entrenando`, `rtu_version_modelo` y `rtu_ultimo_error` |
 
 Códigos de error RTU: 422 entrada inválida (Pydantic o incoherencia clínica: `tipo_mnv` fuera de DMRE, EMD con `diabetes: 0`); 400 fármaco desconocido, todos ya probados o Excel inválido al subir (con la lista de errores); 401 sin API key; 503 si no hay histórico RTU cargado.
 
@@ -509,12 +510,20 @@ Duración de la simulación de la verdad: 81 s en Linux, 223 s en Windows.
 
 ### 12.5 Fase 5: API RTU (local)
 
-- 25 tests automáticos pasan (`python -m pytest -q`, ~4 s).
+- 28 tests automáticos pasan (`python -m pytest -q`; ~7 s en Linux, ~45 s en Windows por la importación de pgmpy).
 - Con el histórico simulado completo: primera llamada 7.6 s (entrena), siguientes 0.04 s.
 - Una copia con solo los archivos que copia el `Dockerfile` importa `api.py` sin errores.
 - Tras cambiar el objetivo por defecto, `fase4_rtu.py` sigue dando exactamente los números de la sección 12.4 (usa `objetivo="inyecciones"` explícito).
 
-### 12.6 Hallazgos para el informe
+### 12.6 Fase 5: API RTU en Render (2026-09-23)
+
+- Carga del histórico: `{"status": "actualizado", "pacientes": 1500, "visitas": 34268}`.
+- `/health` antes de la primera consulta: `rtu_historico_cargado: true`, `rtu_modelo_entrenado: false`.
+- Primera consulta (entrena desde Excel): **88.8 s**. Siguientes: **0.71 s** (desde Montevideo, incluye red).
+- Perfil del entrenamiento en local: leer Excel 4.97 s, red factorizada 4.07 s, índice de casos 1.53 s, Camino A 0.17 s, validación 0.03 s. Leer el mismo histórico en CSV: 0.06 s.
+- Tras T5.13: entrenamiento completo local 6.6 s (Excel) → 1.8 s (CSV). [PENDIENTE] medir en Render.
+
+### 12.7 Hallazgos para el informe
 
 1. **Maldición de la dimensionalidad:** la red completa rinde peor que no usar covariables; la factorizada es la mejor prediciendo visitas.
 2. **Sesgo de selección:** sin estratificar por línea, FarmacoC queda subestimado y el ranking se degrada.
@@ -528,9 +537,9 @@ Duración de la simulación de la verdad: 81 s en Linux, 223 s en Windows.
 
 Orden recomendado: 5 → 6 → 7 → 8 (opcional) → 9. Ninguna fase tiene fecha comprometida.
 
-### Fase 5: integración a la API [HECHO en local; T5.9 pendiente]
+### Fase 5: integración a la API [HECHO]
 
-Estado: T5.1 a T5.8 y T5.10 a T5.12 **[HECHO]**, verificadas con tests y con el cliente de pruebas de FastAPI. **T5.9 [PENDIENTE]:** deploy en Render, subir el Excel RTU y medir (pasos en la sección 16.5).
+Estado: T5.1 a T5.12 **[HECHO]**. Desplegada en Render el 2026-09-23. Queda una sola verificación: volver a medir el arranque tras el deploy de las mejoras de T5.13 y T5.14, y anotar la memoria (Q-05).
 
 **Objetivo:** que la recomendación RTU se pueda pedir por HTTP desde el deploy de Render.
 
@@ -548,6 +557,9 @@ Estado: T5.1 a T5.8 y T5.10 a T5.12 **[HECHO]**, verificadas con tests y con el 
 | T5.10 | Módulo `explicacion_rtu.py`: k-NN determinístico sobre las covariables del paciente (distancia definida y documentada), resumen de desenlaces por fármaco entre los vecinos y listado de los N más parecidos | Mismo caso → mismos vecinos; ningún dato personal en la salida (RF-19, RF-20) |
 | T5.11 | Evaluar si los desenlaces de los vecinos concuerdan con la estimación del modelo y advertir cuando discrepan mucho | Advertencia visible en la respuesta |
 | T5.12 | Cambiar el objetivo por defecto a `estable` en `recomendar()` y `recomendar_por_linea()` (ADR-13) | Tests actualizados |
+| T5.13 | Al subir el histórico, guardar también una copia CSV en R2 y entrenar desde ella | Entrenamiento local de 6.6 s a 1.8 s; misma recomendación desde CSV y Excel (test) |
+| T5.14 | Entrenar en segundo plano al arrancar y después de cada carga | `/health` informa `rtu_entrenando`; test de precalentamiento |
+| T5.15 | Mostrar como máximo un ojo por paciente en `casos_similares` | Test: ningún paciente repetido |
 
 **Contrato de `POST /rtu/sugerir-plan`** [HECHO]:
 
@@ -623,7 +635,7 @@ En `base_de_calculo`, con `metodo: beta` se agrega `camino_A_q6_8` (k, n y nivel
 
 ### Fase 9: informe y presentación [PENDIENTE]
 
-Escribir los hallazgos de la sección 12.6, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
+Escribir los hallazgos de la sección 12.7, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
 
 ### Trabajo futuro (fuera de alcance)
 
@@ -685,12 +697,14 @@ Escribir los hallazgos de la sección 12.6, las limitaciones (sección 14) y el 
 ### 16.1 Entorno (Windows, PowerShell)
 
 ```powershell
-python -m venv venv
-venv\Scripts\activate
-pip install -r requirements.txt
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 ```
 
-Activar el venv cada vez que se abre una terminal nueva. El prompt empieza con `(venv)`.
+Activar el entorno cada vez que se abre una terminal nueva; el prompt empieza con `(.venv)`. Si PowerShell bloquea el script de activación: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned`.
+
+El `.gitignore` excluye `.venv/`, `venv/`, los Excel generados y los caches. Si un `git add` se corta y deja `.git\index.lock`, cortar los procesos con `Stop-Process -Name git -Force` antes de borrar el archivo.
 
 ### 16.2 Pipeline RTU
 
@@ -715,7 +729,7 @@ uvicorn api:app --reload
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest -q                                   # 25 tests
+python -m pytest -q                                   # 28 tests
 $env:RTU_HISTORICO_LOCAL = "historico_rtu_SIMULADO.xlsx"
 uvicorn api:app --reload                              # abrir http://127.0.0.1:8000/docs
 ```
@@ -735,7 +749,9 @@ Para activar el RTU en Render (T5.9), una sola vez:
      -H "X-API-Key: TU_CLAVE" -F "archivo=@historico_rtu_SIMULADO.xlsx"
    ```
 3. `GET /health` debe mostrar `rtu_historico_cargado: true`.
-4. Primera llamada a `/rtu/sugerir-plan` (entrena), anotar el tiempo; después otra, anotar el tiempo. Mirar el uso de memoria en el panel de Render. Registrar todo en la sección 12.
+4. Esperar a que `/health` muestre `rtu_modelo_entrenado: true` (se entrena solo, en segundo plano). Medir una consulta a `/rtu/sugerir-plan` y mirar el uso de memoria en el panel de Render. Registrar todo en la sección 12.
+
+Cada vez que se sube un histórico nuevo, el servicio reentrena solo en segundo plano; mientras tanto, `/health` muestra `rtu_entrenando: true`.
 
 ---
 
@@ -748,3 +764,4 @@ Para activar el RTU en Render (T5.9), una sola vez:
 | 2026-09-22 | Este README reemplaza al anterior como fuente de verdad única. |
 | 2026-09-22 | Resueltas Q-01 a Q-03: no hay frontend todavía; `api-vacunas` en desuso; objetivo = fármacos con más chances de funcionar + explicación por casos similares (RF-19, RF-20, ADR-13, ADR-14, T5.10 a T5.12, T6.0 y T6.3). |
 | 2026-09-23 | Fase 5 en local: endpoints RTU, validador, casos similares, servicio con caché por ETag, objetivo por defecto `estable`, 25 tests, `Dockerfile` actualizado. Pendiente T5.9 (deploy y mediciones). |
+| 2026-09-23 | Fase 5 desplegada en Render: histórico RTU en R2, 0.71 s por consulta, 88.8 s la primera. Mejoras T5.13 (copia CSV) y T5.14 (precalentamiento) y T5.15 (un ojo por paciente); `.gitignore` agregado. |

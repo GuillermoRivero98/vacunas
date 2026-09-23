@@ -96,13 +96,13 @@ def validar(df: pd.DataFrame) -> list[str]:
     return errores[:MAX_ERRORES]
 
 
-def leer_y_validar(fuente) -> pd.DataFrame:
-    """Lee el Excel (path o file-like) y lanza EsquemaInvalido con todos
-    los problemas si no cumple el esquema."""
+def leer_y_validar(fuente, formato: str = "xlsx") -> pd.DataFrame:
+    """Lee el histórico (path o file-like) en formato "xlsx" o "csv" y
+    lanza EsquemaInvalido con todos los problemas si no cumple el esquema."""
     try:
-        df = pd.read_excel(fuente)
-    except Exception as e:  # archivo corrupto, no es xlsx, etc.
-        raise EsquemaInvalido([f"No se pudo leer el archivo como Excel: {e}"]) from e
+        df = pd.read_csv(fuente) if formato == "csv" else pd.read_excel(fuente)
+    except Exception as e:  # archivo corrupto, formato equivocado, etc.
+        raise EsquemaInvalido([f"No se pudo leer el archivo como {formato}: {e}"]) from e
     errores = validar(df)
     if errores:
         raise EsquemaInvalido(errores)

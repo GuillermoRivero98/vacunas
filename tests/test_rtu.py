@@ -211,3 +211,42 @@ def test_admin_archivo_invalido_400(cliente):
     r = cliente.post("/admin/rtu/actualizar-historico", headers={"X-API-Key": "clave-de-test"},
                      files={"archivo": ("x.xlsx", b"no es excel")})
     assert r.status_code == 400 and "errores" in r.json()["detail"]
+
+
+# ------------------------------------------- Mejoras de arranque (T5.9)
+
+def test_csv_equivale_al_excel(historico, path_historico, tmp_path):
+    p_csv = tmp_path / "historico.csv"
+    historico.to_csv(p_csv, index=False)
+    desde_csv = leer_y_validar(str(p_csv), "csv")
+    desde_xlsx = leer_y_validar(path_historico, "xlsx")
+    assert len(desde_csv) == len(desde_xlsx)
+    assert list(desde_csv.columns) == list(desde_xlsx.columns)
+    assert (desde_csv["activo"].values == desde_xlsx["activo"].values).all()
+
+
+def test_misma_recomendacion_desde_csv_y_excel(historico, path_historico, tmp_path):
+    from servicio_rtu import ServicioRTU, cargador_archivo
+    p_csv = tmp_path / "historico.csv"
+    historico.to_csv(p_csv, index=False)
+    caso = {k: v for k, v in CASO.items() if k != "n_casos_similares"}
+    a = ServicioRTU(cargador_archivo(path_historico)).sugerir_plan(caso)
+    b = ServicioRTU(cargador_archivo(str(p_csv))).sugerir_plan(caso)
+    for r in (a, b):
+        r.pop("version_modelo")
+    assert a == b
+
+
+def test_precalentamiento_al_arrancar(cliente):
+    import time
+    import api
+    from fastapi.testclient import TestClient
+    api.servicio_rtu.invalidar()
+    with TestClient(api.app) as c:  # el "with" dispara el evento de arranque
+        for _ in range(120):
+            estado = c.get("/health").json()
+            if estado["rtu_modelo_entrenado"]:
+                break
+            time.sleep(0.5)
+        assert estado["rtu_modelo_entrenado"] is True
+        assert estado["rtu_ultimo_error"] is None

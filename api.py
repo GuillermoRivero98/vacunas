@@ -42,6 +42,7 @@ from servicio_rtu import (
     cargador_archivo,
     cargador_r2,
     datos_simulados_desde_entorno,
+    precalentar_desde_entorno,
 )
 
 app = FastAPI(title="Motor de orden de vacunación / RTU", version="0.2.0")
@@ -53,6 +54,16 @@ servicio_rtu = ServicioRTU(
     cargador_archivo(_path_local_rtu) if _path_local_rtu else cargador_r2(),
     datos_simulados=datos_simulados_desde_entorno(),
 )
+
+
+@app.on_event("startup")
+def _precalentar_rtu():
+    # Render (plan gratuito) duerme el servicio tras un rato sin uso y lo
+    # reinicia al despertarlo: sin esto, el primer médico que consulta
+    # paga el entrenamiento completo. Con esto, entrena apenas arranca,
+    # en segundo plano (la API responde /health mientras tanto).
+    if precalentar_desde_entorno():
+        servicio_rtu.precalentar_en_segundo_plano()
 
 # Habilita que el frontend (Cloudflare Pages, otro origen) llame a esta
 # API desde el navegador. "*" es deliberadamente permisivo: no hay
@@ -241,9 +252,14 @@ async def rtu_actualizar_historico(archivo: UploadFile = File(...), _=Depends(ve
     if _path_local_rtu:
         raise HTTPException(409, "El servicio usa RTU_HISTORICO_LOCAL; no se sube a R2 en ese modo.")
     try:
+        # Primero el Excel original (para personas); al final la copia CSV,
+        # que es la que lee el entrenamiento y cuyo ETag versiona el modelo.
         almacenamiento_r2.subir_historico(io.BytesIO(contenido), almacenamiento_r2.R2_OBJECT_KEY_RTU)
+        csv = io.BytesIO(df.to_csv(index=False).encode("utf-8"))
+        almacenamiento_r2.subir_historico(csv, almacenamiento_r2.R2_OBJECT_KEY_RTU_CSV)
     except RuntimeError as e:
         raise HTTPException(500, str(e))
     servicio_rtu.invalidar()
+    servicio_rtu.precalentar_en_segundo_plano()
     return {"status": "actualizado", "pacientes": int(df["paciente_id"].nunique()),
             "visitas": len(df), "farmacos": sorted(df["farmaco"].astype(str).unique())}

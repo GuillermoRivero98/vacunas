@@ -34,8 +34,10 @@ from estimacion_rtu import (
 from explicacion_rtu import TIEMPO_DISCREPANCIA, IndiceCasos
 from supuestos_protocolo import SUPUESTOS_DEFAULT
 
-# (etag, fuente) -> etag es None si no hay histórico disponible
-Cargador = Callable[[], tuple[str | None, object]]
+# () -> (etag, fuente, formato). etag es None si no hay histórico
+# disponible; fuente puede ser un path, un file-like o una función que lo
+# devuelva (descarga perezosa); formato es "xlsx" o "csv".
+Cargador = Callable[[], tuple[str | None, object, str]]
 
 ADVERTENCIA_SUPUESTOS = ("Los supuestos del protocolo (intervalos, criterios de switch y "
                          "estabilidad, abandono) no están validados clínicamente.")
@@ -69,6 +71,8 @@ class ServicioRTU:
         self._datos_simulados = datos_simulados
         self._modelo: _Modelo | None = None
         self._lock = threading.Lock()
+        self._entrenando = False
+        self._ultimo_error: str | None = None
 
     # ------------------------------------------------------------------
     # Estado del modelo
@@ -82,11 +86,28 @@ class ServicioRTU:
         m = self._modelo
         return {
             "rtu_modelo_entrenado": m is not None,
+            "rtu_entrenando": self._entrenando,
             "rtu_version_modelo": None if m is None else {"etag": m.etag, "entrenado_en": m.entrenado_en},
+            "rtu_ultimo_error": self._ultimo_error,
         }
 
-    def _entrenar(self, etag: str, fuente) -> _Modelo:
-        df = leer_y_validar(fuente)
+    def precalentar_en_segundo_plano(self) -> None:
+        """Entrena en un hilo aparte, sin bloquear el arranque de la API
+        ni el request que lo dispara. Si no hay histórico, no hace nada.
+        Se usa al iniciar el servicio (Render lo reinicia al despertarlo)
+        y después de cada carga de histórico."""
+        def tarea():
+            try:
+                self.modelo()
+                self._ultimo_error = None
+            except HistoricoNoDisponible:
+                pass
+            except Exception as e:  # queda visible en /health
+                self._ultimo_error = f"{type(e).__name__}: {e}"
+        threading.Thread(target=tarea, name="precalentar-rtu", daemon=True).start()
+
+    def _entrenar(self, etag: str, fuente, formato: str) -> _Modelo:
+        df = leer_y_validar(fuente, formato)
         return _Modelo(
             etag=etag,
             entrenado_en=datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -104,12 +125,16 @@ class ServicioRTU:
     def modelo(self) -> _Modelo:
         """Devuelve el modelo vigente; reentrena si el histórico cambió.
         Chequea el ETag en cada llamada (una consulta HEAD liviana a R2)."""
-        etag, fuente = self._cargador()
+        etag, fuente, formato = self._cargador()
         if etag is None:
             raise HistoricoNoDisponible("No hay histórico RTU cargado todavía.")
         with self._lock:
             if self._modelo is None or self._modelo.etag != etag:
-                self._modelo = self._entrenar(etag, fuente() if callable(fuente) else fuente)
+                self._entrenando = True
+                try:
+                    self._modelo = self._entrenar(etag, fuente() if callable(fuente) else fuente, formato)
+                finally:
+                    self._entrenando = False
             return self._modelo
 
     # ------------------------------------------------------------------
@@ -177,12 +202,17 @@ class ServicioRTU:
 
 
 def cargador_r2() -> Cargador:
-    """Cargador de producción: ETag + descarga perezosa desde R2."""
+    """Cargador de producción: ETag + descarga perezosa desde R2. Usa la
+    copia CSV si existe (mucho más rápida de leer); si no, el Excel
+    original (compatibilidad con cargas hechas antes de existir el CSV)."""
     import almacenamiento_r2 as r2
 
     def cargar():
-        etag = r2.etag(r2.R2_OBJECT_KEY_RTU)
-        return etag, (lambda: r2.descargar_historico(r2.R2_OBJECT_KEY_RTU))
+        etag_csv = r2.etag(r2.R2_OBJECT_KEY_RTU_CSV)
+        if etag_csv is not None:
+            return etag_csv, (lambda: r2.descargar_historico(r2.R2_OBJECT_KEY_RTU_CSV)), "csv"
+        etag_xlsx = r2.etag(r2.R2_OBJECT_KEY_RTU)
+        return etag_xlsx, (lambda: r2.descargar_historico(r2.R2_OBJECT_KEY_RTU)), "xlsx"
     return cargar
 
 
@@ -191,10 +221,19 @@ def cargador_archivo(path: str) -> Cargador:
     modificación del archivo."""
     def cargar():
         if not os.path.exists(path):
-            return None, None
-        return f"local-{os.path.getmtime(path)}", path
+            return None, None, "xlsx"
+        formato = "csv" if path.lower().endswith(".csv") else "xlsx"
+        return f"local-{os.path.getmtime(path)}", path, formato
     return cargar
 
 
+def _bool_entorno(nombre: str, default: str = "true") -> bool:
+    return os.environ.get(nombre, default).strip().lower() not in ("0", "false", "no")
+
+
 def datos_simulados_desde_entorno() -> bool:
-    return os.environ.get("RTU_DATOS_SIMULADOS", "true").strip().lower() not in ("0", "false", "no")
+    return _bool_entorno("RTU_DATOS_SIMULADOS")
+
+
+def precalentar_desde_entorno() -> bool:
+    return _bool_entorno("RTU_PRECALENTAR")
