@@ -2,8 +2,10 @@
 explicacion_rtu.py  --  Fase 5 (T5.10, T5.11)
 
 Explica una recomendación mostrando en qué casos históricos parecidos
-se apoya (RF-19), con vecinos más cercanos (k-NN) DETERMINÍSTICOS sobre
-las covariables del paciente (ADR-14). No usa ningún LLM.
+se apoya (RF-19): se calcula una DISTANCIA entre el paciente y cada caso
+del histórico con una fórmula fija, y se ordenan los casos de menor a
+mayor distancia (ADR-14). Es una búsqueda por distancia, determinística:
+no hay aprendizaje automático ni IA.
 
 Unidad de comparación: el OJO (un ojo = una trayectoria de tratamiento).
 

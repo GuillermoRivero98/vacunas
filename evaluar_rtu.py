@@ -36,7 +36,7 @@ from scipy.stats import spearmanr
 
 import generar_datos_rtu as gen
 from estimacion_rtu import (
-    EstimadorBeta,
+    EstimadorFrecuencias,
     EstimadorRedBayesiana,
     preparar,
     recomendar,
@@ -140,10 +140,11 @@ if __name__ == "__main__":
 
     t0 = time.time()
     estimadores = [
-        EstimadorBeta(train, usar_covariables=False, estratificar_linea=False),
-        EstimadorBeta(train, usar_covariables=False),
-        EstimadorBeta(train, estratificar_linea=False),
-        EstimadorBeta(train),
+        EstimadorFrecuencias(train, estratificar_linea=False),
+        EstimadorFrecuencias(train),
+        # Camino A desactivado (ADR-16):
+        # EstimadorBeta(train, estratificar_linea=False),
+        # EstimadorBeta(train),
         EstimadorRedBayesiana(train, "completa"),
         EstimadorRedBayesiana(train, "factorizada"),
     ]
@@ -162,7 +163,7 @@ if __name__ == "__main__":
     print(f"   Caso: {caso}")
     vt = verdad[(verdad.paciente_id == fila.paciente_id) & (verdad.ojo == fila.ojo)]
     print("   p_activo verdadero (q8):", dict(zip(vt.farmaco, vt.p_activo_verdadera_q8.round(3))))
-    for est in (estimadores[3], estimadores[5]):
+    for est in (estimadores[1], estimadores[3]):
         rec = recomendar(est, caso, gen.FARMACOS, objetivo="inyecciones")
         print(f"   [{est.nombre}] orden: {' -> '.join(rec.orden)} | "
               f"E[iny]={rec.valor_orden['inyecciones_esperadas']:.1f} | "

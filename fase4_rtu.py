@@ -38,7 +38,7 @@ from scipy.stats import chi2
 
 import generar_datos_rtu as gen
 from estimacion_rtu import (
-    EstimadorBeta,
+    EstimadorFrecuencias,
     EstimadorRedBayesiana,
     preparar,
     recomendar,
@@ -228,17 +228,18 @@ if __name__ == "__main__":
     tabla_sel, tabla_eval = tabla_verdad_por_orden(ojos)
     print(f"Simulación de la verdad: {time.time() - t0:.0f}s")
 
-    a = EstimadorBeta(train)
+    # a = EstimadorBeta(train)   # Camino A desactivado (ADR-16)
     b = EstimadorRedBayesiana(train, "factorizada")
-    pob = EstimadorBeta(train, usar_covariables=False)
+    pob = EstimadorFrecuencias(train)
     orden_pob = recomendar(pob, {"edad": 70, "diagnostico": "DMRE"}, gen.FARMACOS, objetivo="inyecciones").orden
 
     rng = np.random.default_rng(0)
     elecciones = {
         "azar": [tuple(rng.permutation(gen.FARMACOS)) for _ in ojos],
         "poblacional_fijo": [tuple(orden_pob)] * len(ojos),
-        "A_independiente": [tuple(recomendar(a, o["caso"], gen.FARMACOS, objetivo="inyecciones").orden) for o in ojos],
-        "A_por_linea": [tuple(recomendar_por_linea(a, o["caso"], gen.FARMACOS, objetivo="inyecciones").orden) for o in ojos],
+        # Camino A desactivado (ADR-16):
+        # "A_independiente": [tuple(recomendar(a, o["caso"], gen.FARMACOS, objetivo="inyecciones").orden) for o in ojos],
+        # "A_por_linea": [tuple(recomendar_por_linea(a, o["caso"], gen.FARMACOS, objetivo="inyecciones").orden) for o in ojos],
         "B_independiente": [tuple(recomendar(b, o["caso"], gen.FARMACOS, objetivo="inyecciones").orden) for o in ojos],
         "B_por_linea": [tuple(recomendar_por_linea(b, o["caso"], gen.FARMACOS, objetivo="inyecciones").orden) for o in ojos],
     }
@@ -247,6 +248,6 @@ if __name__ == "__main__":
     print(puntuar_politicas(ojos, tabla_sel, tabla_eval, elecciones).round(3).to_string(index=False))
 
     print("\nCuántos ojos cambian de orden al pasar de 'independiente' a 'por línea':")
-    for cam in ("A", "B"):
+    for cam in ("B",):  # "A" desactivado (ADR-16)
         ind, lin = elecciones[f"{cam}_independiente"], elecciones[f"{cam}_por_linea"]
         print(f"  Camino {cam}: {np.mean([x != y for x, y in zip(ind, lin)]):.1%}")

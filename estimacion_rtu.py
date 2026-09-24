@@ -5,24 +5,24 @@ Estima p_activo(estado, paciente, fármaco): la probabilidad de que, en
 una visita, la enfermedad se evalúe ACTIVA, condicionada al paciente.
 Es la única entrada que necesita el motor de Markov (markov_rtu.py).
 
-Dos caminos, con la misma interfaz .p(caso, farmaco, tiempo, linea):
+TODO ES PROBABILIDAD CLÁSICA: conteos con pandas, probabilidad
+condicional y regla de Bayes. Nada de aprendizaje automático ni IA.
 
-  Camino A -- EstimadorBeta
-    Posterior Beta(1+k, 1+n-k) sobre visitas "similares" del histórico:
-    mismo subtipo diagnóstico, edad +/- margen, mismo momento del
-    tratamiento, mismo fármaco y misma línea. Si la celda tiene menos de
-    n_min visitas, se relaja en capas (primero la edad, después el
-    subtipo) y se informa qué nivel se usó. Auditable: cada p sale de un
-    k/n concreto.
+Método del sistema -- EstimadorRedBayesiana (grafo probabilístico)
+  Tablas de probabilidad condicional con suavizado de Laplace y regla de
+  Bayes (fórmulas en la clase). Si falta un dato del paciente (p.ej. no
+  se sabe si fuma), ese factor se omite: es marginalizar la variable.
 
-  Camino B -- EstimadorRedBayesiana
-    Red bayesiana (pgmpy), prior Dirichlet uniforme, con dos estructuras
-    de DAG a elegir ("completa" y "factorizada", ver la clase). La
-    ventaja propia de la red: si falta un dato del paciente (p.ej. no se
-    sabe si fuma), pgmpy marginaliza esa variable en vez de fallar.
+Método desactivado -- EstimadorBeta (Camino A)
+  Comentado con "#" más abajo, sin ejecutarse (ADR-16). Queda por si se
+  quiere retomar.
 
-Corrección del sesgo de selección: ambos caminos estratifican por LÍNEA
-de tratamiento (1ra vs 2da o posterior). Quien recibe un fármaco como
+Línea base -- EstimadorFrecuencias
+  Frecuencia poblacional sin datos del paciente. Solo para comparar en
+  la evaluación offline.
+
+Corrección del sesgo de selección: se estratifica por LÍNEA de
+tratamiento (1ra vs 2da o posterior). Quien recibe un fármaco como
 segunda línea ya falló con otro y responde peor en general; mezclar
 líneas subestima a los fármacos que se usan más como rescate.
 
@@ -112,64 +112,102 @@ class Estimador(Protocol):
     def p(self, caso: dict, farmaco: str, tiempo: str, linea: int) -> float: ...
 
 
+# ===========================================================================
+# CAMINO A -- DESACTIVADO (2026-09-24, ADR-16)
 # ---------------------------------------------------------------------------
-# Camino A -- Beta posterior sobre visitas similares
+# Decisión: el sistema usa un solo método, el grafo probabilístico
+# (EstimadorRedBayesiana, más abajo). El Camino A (posterior Beta sobre
+# "casos similares" filtrados a mano) queda comentado, sin ejecutarse,
+# por si se quiere retomar.
+#
+# Resultados que tenía (README 12.3 y 12.4): Brier 0.2335 en visitas;
+# 26.7 inyecciones por ojo en la evaluación de políticas (el grafo: 25.3).
+#
+# Para reactivarlo: quitar el "# " de cada línea de este bloque y volver a
+# agregar "beta" como método en servicio_rtu.py y en CasoRTU (api.py).
+# ===========================================================================
+# # ---------------------------------------------------------------------------
+# # Camino A -- Beta posterior sobre visitas similares
+# # ---------------------------------------------------------------------------
+#
+# @dataclass
+# class DetalleBeta:
+#     p_mean: float
+#     k: int
+#     n: int
+#     nivel: str
+#
+#
+# class EstimadorBeta:
+#     """Niveles de similitud (se usa el primero con n >= n_min):
+#        1. subtipo + edad±margen + tiempo + fármaco + línea
+#        2. subtipo + tiempo + fármaco + línea          (se relaja edad)
+#        3. tiempo + fármaco + línea                     (se relaja subtipo)
+#        4. tiempo + fármaco                             (último recurso)
+#     Con usar_covariables=False salta directo al nivel 3 (o 4 si
+#     estratificar_linea=False): sirve de línea base poblacional."""
+#
+#     def __init__(self, historico: pd.DataFrame, margen_edad: int = 10, n_min: int = 30,
+#                  alpha0: float = 1.0, beta0: float = 1.0,
+#                  usar_covariables: bool = True, estratificar_linea: bool = True):
+#         self.nombre = "A_beta" + ("" if usar_covariables else "_poblacional") + ("" if estratificar_linea else "_sin_linea")
+#         self.margen_edad, self.n_min = margen_edad, n_min
+#         self.a0, self.b0 = alpha0, beta0
+#         self.usar_covariables, self.estratificar_linea = usar_covariables, estratificar_linea
+#         df = preparar(historico)
+#         if not estratificar_linea:
+#             df["linea"] = "todas"
+#         self._g4 = {k: g["activo"].to_numpy() for k, g in df.groupby(["subtipo", "tiempo", "farmaco", "linea"])}
+#         self._g4_edad = {k: g["edad"].to_numpy() for k, g in df.groupby(["subtipo", "tiempo", "farmaco", "linea"])}
+#         self._g3 = {k: g["activo"].to_numpy() for k, g in df.groupby(["tiempo", "farmaco", "linea"])}
+#         self._g2 = {k: g["activo"].to_numpy() for k, g in df.groupby(["tiempo", "farmaco"])}
+#
+#     def _beta(self, act: np.ndarray, nivel: str) -> DetalleBeta:
+#         k, n = int(act.sum()), int(len(act))
+#         return DetalleBeta((self.a0 + k) / (self.a0 + self.b0 + n), k, n, nivel)
+#
+#     def detalle(self, caso: dict, farmaco: str, tiempo: str, linea: int) -> DetalleBeta:
+#         lc = linea_cat(linea) if self.estratificar_linea else "todas"
+#         if self.usar_covariables:
+#             clave = (subtipo(caso["diagnostico"], caso.get("tipo_mnv")), tiempo, farmaco, lc)
+#             if clave in self._g4:
+#                 act, edades = self._g4[clave], self._g4_edad[clave]
+#                 cerca = np.abs(edades - caso["edad"]) <= self.margen_edad
+#                 if cerca.sum() >= self.n_min:
+#                     return self._beta(act[cerca], "subtipo+edad+tiempo+farmaco+linea")
+#                 if len(act) >= self.n_min:
+#                     return self._beta(act, "subtipo+tiempo+farmaco+linea")
+#         act = self._g3.get((tiempo, farmaco, lc), np.array([]))
+#         if len(act) >= self.n_min:
+#             return self._beta(act, "tiempo+farmaco+linea")
+#         return self._beta(self._g2.get((tiempo, farmaco), np.array([])), "tiempo+farmaco")
+#
+#     def p(self, caso: dict, farmaco: str, tiempo: str, linea: int) -> float:
+#         return self.detalle(caso, farmaco, tiempo, linea).p_mean
+
+
+# ---------------------------------------------------------------------------
+# Línea base de comparación (solo evaluación offline)
 # ---------------------------------------------------------------------------
 
-@dataclass
-class DetalleBeta:
-    p_mean: float
-    k: int
-    n: int
-    nivel: str
+class EstimadorFrecuencias:
+    """Frecuencia relativa poblacional, sin datos del paciente:
+        P(A=1 | F,T,L) = (n(A=1,F,T,L) + 1) / (n(F,T,L) + 2)
+    (con estratificar_linea=False, se ignora la línea).
+    Sirve de piso: un método que use datos del paciente debería superarla.
+    No la usa la API."""
 
-
-class EstimadorBeta:
-    """Niveles de similitud (se usa el primero con n >= n_min):
-       1. subtipo + edad±margen + tiempo + fármaco + línea
-       2. subtipo + tiempo + fármaco + línea          (se relaja edad)
-       3. tiempo + fármaco + línea                     (se relaja subtipo)
-       4. tiempo + fármaco                             (último recurso)
-    Con usar_covariables=False salta directo al nivel 3 (o 4 si
-    estratificar_linea=False): sirve de línea base poblacional."""
-
-    def __init__(self, historico: pd.DataFrame, margen_edad: int = 10, n_min: int = 30,
-                 alpha0: float = 1.0, beta0: float = 1.0,
-                 usar_covariables: bool = True, estratificar_linea: bool = True):
-        self.nombre = "A_beta" + ("" if usar_covariables else "_poblacional") + ("" if estratificar_linea else "_sin_linea")
-        self.margen_edad, self.n_min = margen_edad, n_min
-        self.a0, self.b0 = alpha0, beta0
-        self.usar_covariables, self.estratificar_linea = usar_covariables, estratificar_linea
-        df = preparar(historico)
-        if not estratificar_linea:
-            df["linea"] = "todas"
-        self._g4 = {k: g["activo"].to_numpy() for k, g in df.groupby(["subtipo", "tiempo", "farmaco", "linea"])}
-        self._g4_edad = {k: g["edad"].to_numpy() for k, g in df.groupby(["subtipo", "tiempo", "farmaco", "linea"])}
-        self._g3 = {k: g["activo"].to_numpy() for k, g in df.groupby(["tiempo", "farmaco", "linea"])}
-        self._g2 = {k: g["activo"].to_numpy() for k, g in df.groupby(["tiempo", "farmaco"])}
-
-    def _beta(self, act: np.ndarray, nivel: str) -> DetalleBeta:
-        k, n = int(act.sum()), int(len(act))
-        return DetalleBeta((self.a0 + k) / (self.a0 + self.b0 + n), k, n, nivel)
-
-    def detalle(self, caso: dict, farmaco: str, tiempo: str, linea: int) -> DetalleBeta:
-        lc = linea_cat(linea) if self.estratificar_linea else "todas"
-        if self.usar_covariables:
-            clave = (subtipo(caso["diagnostico"], caso.get("tipo_mnv")), tiempo, farmaco, lc)
-            if clave in self._g4:
-                act, edades = self._g4[clave], self._g4_edad[clave]
-                cerca = np.abs(edades - caso["edad"]) <= self.margen_edad
-                if cerca.sum() >= self.n_min:
-                    return self._beta(act[cerca], "subtipo+edad+tiempo+farmaco+linea")
-                if len(act) >= self.n_min:
-                    return self._beta(act, "subtipo+tiempo+farmaco+linea")
-        act = self._g3.get((tiempo, farmaco, lc), np.array([]))
-        if len(act) >= self.n_min:
-            return self._beta(act, "tiempo+farmaco+linea")
-        return self._beta(self._g2.get((tiempo, farmaco), np.array([])), "tiempo+farmaco")
+    def __init__(self, historico: pd.DataFrame, estratificar_linea: bool = True):
+        self.nombre = "poblacional" + ("" if estratificar_linea else "_sin_linea")
+        self.estratificar_linea = estratificar_linea
+        d = preparar(historico)
+        claves = ["farmaco", "tiempo"] + (["linea"] if estratificar_linea else [])
+        g = d.groupby(claves)["activo"].agg(["sum", "count"])
+        self._p = {k: (r["sum"] + 1) / (r["count"] + 2) for k, r in g.iterrows()}
 
     def p(self, caso: dict, farmaco: str, tiempo: str, linea: int) -> float:
-        return self.detalle(caso, farmaco, tiempo, linea).p_mean
+        clave = (farmaco, tiempo, linea_cat(linea)) if self.estratificar_linea else (farmaco, tiempo)
+        return float(self._p.get(clave, 0.5))
 
 
 # ---------------------------------------------------------------------------
@@ -177,57 +215,83 @@ class EstimadorBeta:
 # ---------------------------------------------------------------------------
 
 class EstimadorRedBayesiana:
-    """Dos estructuras de DAG, seleccionables con `estructura`:
+    """Grafo probabilístico (red bayesiana) calculado con FÓRMULAS CLÁSICAS
+    de probabilidad sobre tablas de conteo de pandas. Sin librerías de
+    aprendizaje automático: cada número se puede reproducir a mano.
 
-    "completa": Activo con 6 padres directos
-        (Farmaco, Subtipo, Tiempo, Linea, Edad, Carga_comorbida).
-        Captura cualquier interacción, pero la tabla de Activo tiene
-        miles de combinaciones de padres: con un histórico de este
-        tamaño muchas celdas quedan vacías o casi, y el prior las
-        empuja a 0.5 (maldición de la dimensionalidad).
+    Estructura "factorizada" (la usada por defecto, ADR-03):
 
-    "factorizada": Activo <- Farmaco, Tiempo, Linea
-                   Subtipo <- Activo, Farmaco   (interacción dx x fármaco)
-                   Edad <- Activo
-                   Carga_comorbida <- Activo
-        Las covariables del paciente se modelan como "síntomas" de la
-        actividad. Equivale a efectos aditivos en log-odds (parecido a
-        una regresión logística), con ~40 celdas en la tabla de Activo
-        en vez de ~2300. Supone que Edad y Carga_comorbida son
-        condicionalmente independientes dado Activo.
+        Farmaco --\
+        Tiempo  ----> Activo ----> Subtipo  (también depende de Farmaco)
+        Linea   --/          \---> Edad
+                              \--> Carga_comorbida
+
+    Tablas de probabilidad condicional (todas con suavizado de Laplace:
+    se suma 1 a cada celda, igual que un prior Dirichlet uniforme):
+
+        P(A | F,T,L) = (n(A,F,T,L) + 1) / (n(F,T,L) + |A|)
+        P(S | A,F)   = (n(S,A,F)   + 1) / (n(A,F)   + |S|)
+        P(E | A)     = (n(E,A)     + 1) / (n(A)     + |E|)
+        P(C | A)     = (n(C,A)     + 1) / (n(A)     + |C|)
+
+    Regla de Bayes para un paciente:
+
+        P(A=1 | F,T,L,S,E,C) = P(A=1|F,T,L) P(S|1,F) P(E|1) P(C|1)
+                               ------------------------------------------
+                               suma sobre a en {0,1} del mismo producto
+
+    Si falta un dato del paciente (p.ej. comorbilidades), su factor se
+    omite: sumar esa variable sobre todos sus valores da 1 (marginalizar).
+
+    Estructura "completa" (solo para la evaluación offline; rinde peor,
+    ver README 12.3): Activo con los 6 factores como padres,
+        P(A | F,T,L,S,E,C) = (n(A,F,T,L,S,E,C) + 1) / (n(F,T,L,S,E,C) + |A|)
+    y si falta un padre se promedia con su frecuencia (n(x)+1)/(N+|X|).
+
+    Verificado contra la librería pgmpy: mismos resultados a 1e-12
+    (tests/test_rtu.py, test_grafo_igual_a_pgmpy).
     """
-    ESTRUCTURAS = {
-        "completa": [(p, "Activo") for p in
-                     ["Farmaco", "Subtipo", "Tiempo", "Linea", "Edad", "Carga_comorbida"]],
-        "factorizada": [("Farmaco", "Activo"), ("Tiempo", "Activo"), ("Linea", "Activo"),
-                        ("Activo", "Subtipo"), ("Farmaco", "Subtipo"),
-                        ("Activo", "Edad"), ("Activo", "Carga_comorbida")],
-    }
+
     NODOS_PACIENTE = ["Farmaco", "Subtipo", "Tiempo", "Linea", "Edad", "Carga_comorbida"]
 
     def __init__(self, historico: pd.DataFrame, estructura: str = "factorizada",
                  pseudo_conteos: float = 1.0):
-        from pgmpy.estimators import BayesianEstimator
-        from pgmpy.inference import VariableElimination
-        from pgmpy.models import DiscreteBayesianNetwork
-
+        if estructura not in ("factorizada", "completa"):
+            raise ValueError("estructura debe ser 'factorizada' o 'completa'")
         self.nombre = f"B_red_{estructura}"
+        self.estructura = estructura
+        self.alfa = pseudo_conteos
         d = preparar(historico)
-        datos = pd.DataFrame({
+        self.datos = pd.DataFrame({
             "Farmaco": d["farmaco"], "Subtipo": d["subtipo"], "Tiempo": d["tiempo"],
             "Linea": d["linea"], "Edad": d["edad_cat"], "Carga_comorbida": d["carga_comorbida"],
-            "Activo": d["activo"].astype(str),
+            "Activo": d["activo"].astype(int),
         })
-        modelo = DiscreteBayesianNetwork(self.ESTRUCTURAS[estructura])
-        cpds = BayesianEstimator(modelo, datos).get_parameters(prior_type="dirichlet",
-                                                               pseudo_counts=pseudo_conteos)
-        modelo.add_cpds(*cpds)
-        modelo.check_model()
-        self.modelo = modelo
-        self._ve = VariableElimination(modelo)
-        self._estados = {n: modelo.get_cpds(n).state_names[n] for n in modelo.nodes()}
-        # CPDs que involucran a Activo (su propia tabla + la de sus hijos)
-        self._cpds_activo = [c for c in modelo.get_cpds() if "Activo" in c.variables]
+        # Valores observados de cada variable (definen |X| en las fórmulas)
+        self._estados = {c: sorted(self.datos[c].astype(str).unique()) if c != "Activo" else [0, 1]
+                         for c in self.datos.columns}
+        self._n_total = len(self.datos)
+        if estructura == "factorizada":
+            self._t_activo = self._tabla(["Farmaco", "Tiempo", "Linea"])
+            self._t_hijos = {
+                "Subtipo": (self._tabla(["Activo", "Farmaco", "Subtipo"]), self._tabla(["Activo", "Farmaco"])),
+                "Edad": (self._tabla(["Activo", "Edad"]), self._tabla(["Activo"])),
+                "Carga_comorbida": (self._tabla(["Activo", "Carga_comorbida"]), self._tabla(["Activo"])),
+            }
+            self._t_activo_conj = self._tabla(["Activo", "Farmaco", "Tiempo", "Linea"])
+        else:
+            padres = self.NODOS_PACIENTE
+            self._t_conj = self._tabla(["Activo"] + padres)
+            self._t_padres = self._tabla(padres)
+            self._t_raiz = {p: self._tabla([p]) for p in padres}
+
+    def _tabla(self, columnas: list[str]) -> dict:
+        """Conteos n(columnas) como diccionario {tupla de valores: n}."""
+        return self.datos.groupby(columnas).size().to_dict()
+
+    @staticmethod
+    def _n(tabla: dict, clave) -> int:
+        return tabla.get(clave if len(clave) > 1 else clave[0], 0)
 
     def _evidencia(self, caso: dict, farmaco: str, tiempo: str, linea: int) -> dict:
         ev = {"Farmaco": farmaco, "Tiempo": tiempo, "Linea": linea_cat(linea)}
@@ -237,30 +301,52 @@ class EstimadorRedBayesiana:
             ev["Edad"] = edad_cat(caso["edad"])
         if all(c in caso for c in COMORBILIDADES):
             ev["Carga_comorbida"] = carga_cat(sum(int(caso[c]) for c in COMORBILIDADES))
-        # estados que la red nunca vio se descartan (se marginalizan)
+        # un valor que nunca aparece en el histórico se trata como dato faltante
         return {k: v for k, v in ev.items() if v in self._estados[k]}
 
-    def _p_exacta_rapida(self, ev: dict) -> float:
-        """Con toda la evidencia presente, P(Activo | ev) es proporcional
-        al producto de las entradas de las CPDs que contienen a Activo
-        (el resto de la red se cancela al normalizar). Exacto y mucho
-        más rápido que VariableElimination."""
+    def _p_factorizada(self, ev: dict) -> float:
+        a = self.alfa
+        f, t, l = ev.get("Farmaco"), ev.get("Tiempo"), ev.get("Linea")
         puntaje = {}
-        for a in self._estados["Activo"]:
-            prod = 1.0
-            for cpd in self._cpds_activo:
-                idx = tuple(cpd.state_names[v].index(a if v == "Activo" else ev[v])
-                            for v in cpd.variables)
-                prod *= float(cpd.values[idx])
-            puntaje[a] = prod
-        return puntaje["1"] / sum(puntaje.values())
+        for act in (0, 1):
+            # P(A | F,T,L)
+            n_conj = self._n(self._t_activo_conj, (act, f, t, l))
+            n_pad = self._n(self._t_activo, (f, t, l))
+            prod = (n_conj + a) / (n_pad + a * 2)
+            # P(hijo | A, ...) para cada dato conocido del paciente
+            if "Subtipo" in ev:
+                t_hijo, t_pad = self._t_hijos["Subtipo"]
+                prod *= ((self._n(t_hijo, (act, f, ev["Subtipo"])) + a)
+                         / (self._n(t_pad, (act, f)) + a * len(self._estados["Subtipo"])))
+            for hijo in ("Edad", "Carga_comorbida"):
+                if hijo in ev:
+                    t_hijo, t_pad = self._t_hijos[hijo]
+                    prod *= ((self._n(t_hijo, (act, ev[hijo])) + a)
+                             / (self._n(t_pad, (act,)) + a * len(self._estados[hijo])))
+            puntaje[act] = prod
+        return puntaje[1] / (puntaje[0] + puntaje[1])
+
+    def _p_completa(self, ev: dict) -> float:
+        from itertools import product
+        a = self.alfa
+        faltan = [p for p in self.NODOS_PACIENTE if p not in ev]
+        opciones = [self._estados[p] for p in faltan]
+        total = 0.0
+        for valores in product(*opciones):
+            completo = {**ev, **dict(zip(faltan, valores))}
+            peso = 1.0
+            for p, v in zip(faltan, valores):  # frecuencia de cada padre faltante
+                peso *= (self._n(self._t_raiz[p], (v,)) + a) / (self._n_total + a * len(self._estados[p]))
+            clave = tuple(completo[p] for p in self.NODOS_PACIENTE)
+            p1 = (self._n(self._t_conj, (1,) + clave) + a) / (self._n(self._t_padres, clave) + a * 2)
+            total += peso * p1
+        return total
 
     def p(self, caso: dict, farmaco: str, tiempo: str, linea: int) -> float:
         ev = self._evidencia(caso, farmaco, tiempo, linea)
-        if all(n in ev for n in self.NODOS_PACIENTE):
-            return self._p_exacta_rapida(ev)
-        q = self._ve.query(["Activo"], evidence=ev, show_progress=False)
-        return float(q.values[q.state_names["Activo"].index("1")])
+        if self.estructura == "factorizada":
+            return self._p_factorizada(ev)
+        return self._p_completa(ev)
 
 
 # ---------------------------------------------------------------------------

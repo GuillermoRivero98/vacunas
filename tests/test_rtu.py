@@ -178,9 +178,9 @@ def test_comorbilidades_faltantes_se_aceptan(cliente):
     assert r.status_code == 200
 
 
-def test_metodo_beta(cliente):
-    j = cliente.post("/rtu/sugerir-plan", json={**CASO, "metodo": "beta"}).json()
-    assert "camino_A_q6_8" in j["base_de_calculo"]["FarmacoA"]
+def test_camino_A_desactivado(cliente):
+    # ADR-16: solo se admite el grafo probabilístico
+    assert cliente.post("/rtu/sugerir-plan", json={**CASO, "metodo": "beta"}).status_code == 422
 
 
 @pytest.mark.parametrize("cuerpo", [
@@ -237,16 +237,155 @@ def test_misma_recomendacion_desde_csv_y_excel(historico, path_historico, tmp_pa
     assert a == b
 
 
-def test_precalentamiento_al_arrancar(cliente):
-    import time
+def test_arranque_no_entrena(path_historico, monkeypatch_module):
+    # Regresión del deploy fallido por "port scan timeout": arrancar el
+    # servicio NO debe disparar ningún entrenamiento.
     import api
     from fastapi.testclient import TestClient
+    if api.servicio_rtu._hilo is not None:  # hilo lanzado por un /health de otro test
+        api.servicio_rtu._hilo.join(timeout=300)
+    api.servicio_rtu._hilo = None
     api.servicio_rtu.invalidar()
-    with TestClient(api.app) as c:  # el "with" dispara el evento de arranque
-        for _ in range(120):
-            estado = c.get("/health").json()
-            if estado["rtu_modelo_entrenado"]:
+    with TestClient(api.app):  # el "with" ejecuta los eventos de arranque
+        assert api.servicio_rtu._hilo is None or not api.servicio_rtu._hilo.is_alive()
+        assert api.servicio_rtu.estado()["rtu_modelo_entrenado"] is False
+
+
+def test_health_dispara_precalentamiento(cliente):
+    import time
+    import api
+    api.servicio_rtu.invalidar()
+    primera = cliente.get("/health").json()
+    assert primera["rtu_modelo_entrenado"] is False  # responde en el acto
+    for _ in range(120):
+        estado = cliente.get("/health").json()  # no lanza entrenamientos duplicados
+        if estado["rtu_modelo_entrenado"]:
+            break
+        time.sleep(0.5)
+    assert estado["rtu_modelo_entrenado"] is True
+    assert estado["rtu_ultimo_error"] is None
+
+
+# ------------------------------------ Grafo con fórmulas clásicas (ADR-16)
+
+def test_grafo_igual_a_pgmpy(historico):
+    pytest.importorskip("pgmpy")
+    from referencia_pgmpy import EstimadorRedBayesianaPgmpy
+    from estimacion_rtu import EstimadorRedBayesiana, TIEMPOS
+    for estructura in ("factorizada", "completa"):
+        nuestro = EstimadorRedBayesiana(historico, estructura)
+        ref = EstimadorRedBayesianaPgmpy(historico, estructura)
+        casos = [CASO, {"diagnostico": "ORVR", "edad": 66}, {"diagnostico": "EMD", "edad": 58, "diabetes": 1,
+                 "hipertension": 1, "acv_iam_reciente": 0, "tabaquismo": 1}]
+        for c in casos:
+            for f in gen.FARMACOS:
+                for t in TIEMPOS:
+                    for linea in (1, 2):
+                        assert abs(nuestro.p(c, f, t, linea) - ref.p(c, f, t, linea)) < 1e-12
+
+
+def test_grafo_no_usa_librerias_de_aprendizaje():
+    """El sistema no importa librerías de aprendizaje automático (ADR-16)."""
+    import ast, inspect
+    import compras_rtu, estimacion_rtu, explicacion_rtu, markov_rtu, servicio_rtu
+    prohibidas = {"pgmpy", "sklearn", "torch", "tensorflow", "statsmodels", "xgboost", "lightgbm"}
+    for modulo in (estimacion_rtu, compras_rtu, explicacion_rtu, markov_rtu, servicio_rtu):
+        for nodo in ast.walk(ast.parse(inspect.getsource(modulo))):
+            if isinstance(nodo, ast.Import):
+                nombres = [a.name for a in nodo.names]
+            elif isinstance(nodo, ast.ImportFrom):
+                nombres = [nodo.module or ""]
+            else:
+                continue
+            for n in nombres:
+                assert n.split(".")[0] not in prohibidas, (modulo.__name__, n)
+
+
+# ------------------------------------------------- Estimación de compra
+
+def test_estado_desde_etiqueta_ida_y_vuelta():
+    from compras_rtu import estado_desde_etiqueta
+    for e in enumerar_estados():
+        assert estado_desde_etiqueta(e.etiqueta(), e.intervalo_semanas) == e
+
+
+def test_esperanza_y_varianza_exactas_igual_a_montecarlo():
+    """La programación dinámica debe coincidir con simular la misma dinámica."""
+    from compras_rtu import CalculadoraDemanda, UsoHistorico
+    from supuestos_protocolo import EstadoCiclo, SUPUESTOS_DEFAULT as S, transicion
+    from estimacion_rtu import tiempo_de_estado
+
+    class EstFijo:  # p_activo conocida, distinta por fármaco y momento
+        base = {"FarmacoA": 0.55, "FarmacoB": 0.30, "FarmacoC": 0.40}
+        def p(self, caso, f, t, linea):
+            return min(0.95, self.base[f] + (0.15 if t.startswith("C") else 0.0) + 0.05 * (linea - 1))
+
+    uso = UsoHistorico(gen.FARMACOS, {f: 1 for f in gen.FARMACOS},
+                       {"FarmacoA": 0.6, "FarmacoB": 0.3, "FarmacoC": 0.1},
+                       {"FarmacoA": 1.0, "FarmacoB": 3.0, "FarmacoC": 2.0})
+    calc = CalculadoraDemanda(EstFijo(), uso)
+    caso = {"diagnostico": "DMRE", "tipo_mnv": "MNV1", "edad": 70}
+    H = 60
+    E, E2 = calc.momentos(caso, EstadoCiclo.inicio(), "FarmacoA", frozenset({"FarmacoA"}), H)
+
+    rng = np.random.default_rng(123)
+    est, n = EstFijo(), 40_000
+    X = np.zeros((n, 3))
+    for i in range(n):
+        e, f, prob, w = EstadoCiclo.inicio(), "FarmacoA", {"FarmacoA"}, H
+        while True:
+            d = transicion(e, bool(rng.random() < est.p(caso, f, tiempo_de_estado(e), len(prob))), S)
+            if d.inyecta:
+                X[i, gen.FARMACOS.index(f)] += 1
+            if d.accion == "estable":
                 break
-            time.sleep(0.5)
-        assert estado["rtu_modelo_entrenado"] is True
-        assert estado["rtu_ultimo_error"] is None
+            if d.accion == "switch":
+                rest = [g for g in gen.FARMACOS if g not in prob]
+                if not rest:
+                    break
+                pw = np.array([uso.peso_switch[g] for g in rest])
+                f = str(rng.choice(rest, p=pw / pw.sum()))
+                prob.add(f)
+                e = EstadoCiclo.inicio()
+                continue  # la carga del nuevo fármaco es en la misma visita
+            if d.intervalo_hasta_proxima > w or rng.random() < S.prob_abandono_por_visita:
+                break
+            w -= d.intervalo_hasta_proxima
+            e = d.siguiente
+    for g in range(3):
+        m, v = X[:, g].mean(), X[:, g].var()
+        assert abs(E[g] - m) < 4 * np.sqrt(v / n) + 1e-9, (g, E[g], m)
+        assert abs((E2[g] - E[g] ** 2) - v) / max(v, 1e-9) < 0.05, (g, E2[g] - E[g] ** 2, v)
+
+
+def test_estimacion_compra_endpoint(cliente):
+    r = cliente.post("/rtu/estimacion-compra", json={"horizonte_semanas": 26})
+    assert r.status_code == 200
+    j = r.json()
+    assert set(j["por_farmaco"]) == set(gen.FARMACOS)
+    for f, v in j["por_farmaco"].items():
+        assert v["compra_sugerida"] >= v["demanda_esperada"] >= 0
+        assert v["desvio_estandar"] >= 0
+    assert "factor" in j["calibracion"] and "uso_historico" in j
+    # la segunda llamada sale de la caché: mismo resultado
+    assert cliente.post("/rtu/estimacion-compra", json={"horizonte_semanas": 26}).json() == j
+
+
+def test_estimacion_compra_mas_nivel_mas_compra(cliente):
+    a = cliente.post("/rtu/estimacion-compra", json={"horizonte_semanas": 26, "nivel_servicio": 0.8}).json()
+    b = cliente.post("/rtu/estimacion-compra", json={"horizonte_semanas": 26, "nivel_servicio": 0.99}).json()
+    for f in gen.FARMACOS:
+        assert b["por_farmaco"][f]["compra_sugerida"] >= a["por_farmaco"][f]["compra_sugerida"]
+
+
+def test_pacientes_nuevos_suman_demanda(cliente):
+    a = cliente.post("/rtu/estimacion-compra", json={"horizonte_semanas": 26}).json()
+    b = cliente.post("/rtu/estimacion-compra", json={"horizonte_semanas": 26, "nuevos_ojos_por_semana": 2}).json()
+    for f in gen.FARMACOS:
+        assert b["por_farmaco"][f]["demanda_esperada"] >= a["por_farmaco"][f]["demanda_esperada"]
+
+
+@pytest.mark.parametrize("cuerpo", [{"horizonte_semanas": 200}, {"nivel_servicio": 1.5},
+                                    {"nuevos_ojos_por_semana": -1}])
+def test_estimacion_compra_422(cliente, cuerpo):
+    assert cliente.post("/rtu/estimacion-compra", json=cuerpo).status_code == 422

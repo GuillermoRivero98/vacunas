@@ -2,7 +2,7 @@
 
 > **Este documento es la fuente de verdad del proyecto.** Antes de asumir cualquier cosa sobre el sistema —en una sesión propia o con un asistente de IA— se consulta acá. Si algo no está en este documento, no se da por hecho: se verifica y se agrega.
 
-Última actualización: 2026-09-23
+Última actualización: 2026-09-24
 
 ---
 
@@ -89,6 +89,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | P4 | **La verdad oculta nunca la lee un estimador.** | Vive en un archivo aparte y solo la usan los scripts de evaluación. |
 | P5 | **Partición train/test por paciente**, nunca por fila. | Los dos ojos y todas las visitas de un paciente quedan del mismo lado. |
 | P6 | **Separar modelo de estimación.** | El motor de Markov recibe `p_activo(estado)` ya armada; no estima nada. |
+| P8 | **Solo probabilidad clásica.** Nada de aprendizaje automático ni IA (ADR-16). | Conteos con pandas, probabilidad condicional, regla de Bayes, esperanza, varianza, Teorema Central del Límite. Ninguna librería de *machine learning* en el sistema; un test lo verifica. |
 | P7 | **Honestidad estadística.** | Se reportan incertidumbre, errores estándar y limitaciones. No se declara un ganador si las diferencias están dentro del ruido. |
 
 ---
@@ -102,8 +103,8 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-01 | Generar un histórico simulado por visita y por ojo con las variables de RetinApp. | [HECHO] |
 | RF-02 | Exportar la verdad oculta por (paciente, ojo, fármaco), incluidos contrafácticos, en un archivo separado. | [HECHO] |
 | RF-03 | Modelar el protocolo T&E como cadena de Markov absorbente y calcular visitas, inyecciones, semanas y probabilidades de absorción. | [HECHO] |
-| RF-04 | Estimar `p_activo(estado, paciente, fármaco, línea)` con el Camino A (Beta). | [HECHO] |
-| RF-05 | Estimar `p_activo` con el Camino B (red bayesiana, estructuras completa y factorizada). | [HECHO] |
+| RF-04 | Estimar `p_activo(estado, paciente, fármaco, línea)` con el Camino A (Beta). | **[DESACTIVADO]** comentado con `#` (ADR-16) |
+| RF-05 | Estimar `p_activo` con el grafo probabilístico (red bayesiana), calculado con fórmulas clásicas sobre conteos de pandas. **Único método del sistema.** | [HECHO] |
 | RF-06 | Si falta un dato del paciente, el Camino B marginaliza esa variable en vez de fallar. | [HECHO] |
 | RF-07 | Recomendar fármacos y su orden. **Objetivo por defecto: maximizar P(estable)** (el fármaco con más chances de funcionar); alternativo: minimizar inyecciones esperadas. | [HECHO] |
 | RF-08 | Recomendación consciente de línea (posición 1 con estimación de línea 1, siguientes con línea 2+). | [HECHO] |
@@ -118,6 +119,8 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-17 | Personalizar `p_activo` con la historia observada del propio ojo. | [PENDIENTE] Fase 8, opcional |
 | RF-18 | Resumen en lenguaje natural por LLM con reglas de *grounding* (P1). | [PENDIENTE] Opcional, sin decidir |
 | RF-19 | **Explicación por casos similares:** junto con cada recomendación, mostrar en qué casos históricos se basa: cuántos casos parecidos hubo por fármaco, cómo les fue (estable / switch / abandono, inyecciones) y un listado de los N casos más parecidos con sus características y su evolución. | [HECHO] |
+| RF-21 | **Estimación de compra:** demanda esperada, desvío y compra sugerida por fármaco en un horizonte, a un nivel de servicio dado, según el uso histórico de cada fármaco (`POST /rtu/estimacion-compra`). | [HECHO] en local |
+| RF-22 | Calibrar la estimación de compra con backtests sobre el propio histórico y mostrar la calibración usada. | [HECHO] |
 | RF-20 | Los casos mostrados al médico se identifican solo con IDs anónimos del histórico, nunca con datos personales. | [HECHO] (el histórico tampoco debe contener datos personales) |
 
 ### 4.2 No funcionales
@@ -125,11 +128,11 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | Id | Requerimiento | Criterio | Estado |
 |---|---|---|---|
 | RNF-01 | Reproducibilidad | Mismas entradas y semillas → mismos resultados en cualquier máquina. | [HECHO] Verificado Linux vs Windows, fases 1 a 4. |
-| RNF-02 | Auditabilidad | El Camino A informa k, n y nivel de similitud usado; todo cálculo es trazable. | [HECHO] |
+| RNF-02 | Auditabilidad | Cada probabilidad del grafo es un cociente de conteos reproducible a mano; la compra informa su calibración y los backtests usados. | [HECHO] |
 | RNF-03 | Configurabilidad del protocolo | Cambiar un supuesto clínico = cambiar un valor en `supuestos_protocolo.py`. | [HECHO] |
 | RNF-04 | Latencia de `/rtu/sugerir-plan` con el modelo entrenado | < 2 s | [HECHO] Render: 0.71 s medido desde Montevideo (incluye red). |
-| RNF-05 | Arranque en frío en Render | El entrenamiento no debe recaer en la consulta del médico. | Medido: 88.8 s en la primera consulta (entrenando desde Excel). Mitigado con lectura CSV y precalentamiento al arrancar; [PENDIENTE] volver a medir tras el deploy. Antes de usar el sistema, llamar a `/health` y esperar `rtu_modelo_entrenado: true`. |
-| RNF-06 | Memoria | La imagen con pgmpy y sus dependencias debe entrar en los recursos del plan de Render. | [A CONFIRMAR] qué recurso son los 10 GB informados (ver Q-05) y consumo real de RAM |
+| RNF-05 | Arranque en frío en Render | El entrenamiento no debe recaer en la consulta del médico. | Medido: 88.8 s en la primera consulta (entrenando desde Excel). Mitigado con lectura CSV (T5.13) y precalentamiento disparado por `/health` (T5.14); [PENDIENTE] volver a medir tras el deploy. Antes de usar el sistema, llamar a `/health` y esperar `rtu_modelo_entrenado: true`. |
+| RNF-06 | Memoria | La imagen debe entrar en los recursos del plan de Render. El sistema RTU ya no carga pgmpy (solo lo usa el legacy). | [A CONFIRMAR] qué recurso son los 10 GB informados (ver Q-05) y consumo real de RAM |
 | RNF-07 | Seguridad | Endpoints de administración con `X-API-Key`; secretos solo en variables de entorno; el Excel nunca queda público. | [HECHO] en legacy; replicar en RTU |
 | RNF-08 | Privacidad | Sin datos de pacientes reales en el repo ni en R2 hasta tener autorización formal. | Vigente |
 | RNF-09 | Compatibilidad | Python 3.12; versiones fijadas en `requirements.txt`. | [HECHO] |
@@ -172,7 +175,7 @@ flowchart LR
 | `R2_BUCKET_NAME` | Bucket del Excel. | No (default `vacunas-historico`) |
 | `FRONTEND_ORIGINS` | Restringe CORS a orígenes separados por coma. | No (default `*`) |
 | `RTU_DATOS_SIMULADOS` | Si es `true`, la respuesta RTU advierte que los datos son simulados. Poner `false` recién con datos reales. | No (default `true`) |
-| `RTU_PRECALENTAR` | Si es `true`, entrena el modelo RTU en segundo plano al arrancar el servicio. | No (default `true`) |
+| `RTU_PRECALENTAR` | Si es `true`, la primera llamada a `/health` (con histórico cargado y sin modelo) dispara el entrenamiento RTU en segundo plano. | No (default `true`) |
 | `RTU_HISTORICO_LOCAL` | **Solo desarrollo:** ruta a un Excel RTU local en vez de R2. No configurarla en Render. | No |
 
 ### 5.4 Repos y servicios: cuál es cuál
@@ -267,21 +270,42 @@ Discretizaciones comunes:
 | Edad (Camino B) | <65, 65-79, 80+ |
 | Carga comórbida (Camino B) | Conteo de diabetes, hipertensión, ACV/IAM reciente y tabaquismo: 0, 1, 2+ |
 
-**Camino A, Beta:** posterior `Beta(1 + k, 1 + n − k)` sobre visitas similares. Niveles, usando el primero con n ≥ 30:
+**Grafo probabilístico (único método del sistema), estructura factorizada:** `Activo ← Farmaco, Tiempo, Linea`; `Subtipo ← Activo, Farmaco`; `Edad ← Activo`; `Carga_comorbida ← Activo`. Se calcula con fórmulas clásicas sobre conteos de pandas, con suavizado de Laplace (+1 por celda):
 
-1. subtipo + edad ± 10 + tiempo + fármaco + línea
-2. subtipo + tiempo + fármaco + línea
-3. tiempo + fármaco + línea
-4. tiempo + fármaco
+```
+P(A | F,T,L) = (n(A,F,T,L) + 1) / (n(F,T,L) + 2)
+P(S | A,F)   = (n(S,A,F) + 1)   / (n(A,F) + |S|)
+P(E | A)     = (n(E,A) + 1)     / (n(A) + |E|)
+P(C | A)     = (n(C,A) + 1)     / (n(A) + |C|)
 
-**Camino B, red bayesiana (pgmpy, prior Dirichlet uniforme):**
+                         P(A=1|F,T,L) · P(S|1,F) · P(E|1) · P(C|1)
+P(A=1 | paciente) = ------------------------------------------------   (regla de Bayes)
+                     suma sobre a ∈ {0,1} del mismo producto
+```
 
-- *Completa:* Activo con 6 padres directos. Unas 2.300 combinaciones de padres; muchas celdas vacías.
-- *Factorizada (recomendada):* `Activo ← Farmaco, Tiempo, Linea`; `Subtipo ← Activo, Farmaco`; `Edad ← Activo`; `Carga_comorbida ← Activo`. Unas 40 celdas en la tabla de Activo; efectos aproximadamente aditivos en log-odds.
+Si falta un dato del paciente, su factor se omite (marginalizar). Verificado contra la librería pgmpy: diferencia 0 en 5.400 consultas; ahora entrena en 0.10 s contra 3.86 s.
+
+La estructura *completa* (Activo con los 6 factores como padres, ~2.300 celdas) queda solo en la evaluación offline: rinde peor (celdas vacías).
+
+**Camino A (desactivado, ADR-16):** posterior `Beta(1 + k, 1 + n − k)` sobre visitas similares filtradas por capas. Comentado con `#` en `estimacion_rtu.py`, con instrucciones para reactivarlo.
+
+**Línea base de evaluación:** frecuencia poblacional `(n(A=1,F,T,L) + 1) / (n(F,T,L) + 2)`, sin datos del paciente.
 
 Glaucoma y cristalino **no se usan** por decisión de diseño (ADR-07).
 
-### 7.4 Evaluación
+### 7.4 Estimación de compra (`compras_rtu.py`)
+
+1. **Uso histórico:** `P(primer fármaco = f) = (n_f + 1) / (n + k)` y peso de cada fármaco al hacer switch `= n_switch→f + 1`, renormalizado entre los no probados.
+2. **Demanda de un ojo en las próximas w semanas**, con X_g = inyecciones del fármaco g. Programación dinámica exacta sobre la cadena del protocolo (no simulación): en cada visita, con probabilidad `p_activo` (del grafo) se evalúa activo, la regla da la acción (estable, switch, o inyectar y volver en q semanas con abandono previo pa), y
+   ```
+   E[X]   = Σ ramas P(rama)·(c + E[Y])
+   E[X²]  = Σ ramas P(rama)·(c² + 2c·E[Y] + E[Y²])       Var[X] = E[X²] − E[X]²
+   ```
+3. **Demanda total:** suma de esperanzas y varianzas de los ojos en tratamiento (independientes) más pacientes nuevos como llegadas de Poisson con tasa λ: `E = λ Σ_t E[X_t]`, `Var = λ Σ_t E[X_t²]`.
+4. **Calibración (RF-22):** backtests en 4 ventanas anteriores al corte (`corte − H − 13k`); `factor = Σ real / Σ predicho`, `inflación = raíz(media z²)`. Pronóstico calibrado: `E' = factor·E`, `desvío' = inflación·factor·desvío`.
+5. **Compra sugerida:** por el Teorema Central del Límite, `compra = techo(E' + z_α · desvío')`, con α el nivel de servicio (probabilidad de que alcance).
+
+### 7.5 Evaluación
 
 | Nivel | Métrica | ¿Posible con datos reales? |
 |---|---|---|
@@ -382,15 +406,17 @@ Columnas mínimas que exige `motor_probabilidades.correr_pipeline`: `paciente_id
 | `supuestos_protocolo.py` | Supuestos, `EstadoCiclo`, `transicion()`, `evaluar_actividad()` | — | [HECHO] |
 | `generar_datos_rtu.py` | Genera el histórico y la verdad oculta | supuestos | [HECHO] |
 | `markov_rtu.py` | Cadena, matriz fundamental, orden óptimo, casos límite, Monte Carlo | supuestos | [HECHO] |
-| `estimacion_rtu.py` | Caminos A y B, `recomendar()`, `recomendar_por_linea()` | markov, pgmpy | [HECHO] |
+| `estimacion_rtu.py` | Grafo con fórmulas clásicas, línea base de frecuencias, Camino A comentado, `recomendar()`, `recomendar_por_linea()` | markov, pandas | [HECHO] |
 | `evaluar_rtu.py` | Evaluación offline fase 3 | estimación, generador | [HECHO] |
 | `fase4_rtu.py` | Test CMH y evaluación de políticas | estimación, evaluar | [HECHO] |
 | `esquema_rtu.py` | Validador del Excel RTU (T5.2) | — | [HECHO] |
-| `explicacion_rtu.py` | Casos similares por k-NN y chequeo de discrepancias (T5.10, T5.11) | estimación | [HECHO] |
+| `explicacion_rtu.py` | Casos similares por fórmula de distancia y chequeo de discrepancias (T5.10, T5.11) | estimación | [HECHO] |
+| `compras_rtu.py` | Estimación de compra: uso histórico, esperanza y varianza exactas, calibración, backtest (RF-21, RF-22) | estimación, supuestos | [HECHO] |
+| `tests/referencia_pgmpy.py` | Versión del grafo con pgmpy, **solo** para verificar en los tests que las fórmulas dan lo mismo | pgmpy | [HECHO] |
 | `servicio_rtu.py` | Modelo en memoria con invalidación por ETag; arma la respuesta (T5.4, T5.5) | todos los anteriores, R2 | [HECHO] |
-| `tests/` , `pytest.ini`, `requirements-dev.txt` | 28 tests automáticos (T5.8) | — | [HECHO] |
+| `tests/` , `pytest.ini`, `requirements-dev.txt` | 39 tests automáticos | — | [HECHO] |
 
-Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu`, `esquema_rtu`, `explicacion_rtu` y `servicio_rtu`. Quedan afuera las herramientas offline (`generar_datos_rtu`, `evaluar_rtu`, `fase4_rtu`, `tests/`).
+Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu`, `esquema_rtu`, `explicacion_rtu`, `servicio_rtu` y `compras_rtu`. Quedan afuera las herramientas offline (`generar_datos_rtu`, `evaluar_rtu`, `fase4_rtu`, `tests/`).
 
 ### 10.2 Módulos legacy (en producción)
 
@@ -422,7 +448,8 @@ Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu
 |---|---|---|
 | POST | `/rtu/sugerir-plan` | Recomendación + casos similares (contrato en la fase 5, sección 13) |
 | POST | `/admin/rtu/actualizar-historico` | Valida el Excel RTU y, si es válido, sube a R2 el original y una copia CSV, y reentrena en segundo plano (`X-API-Key`) |
-| GET | `/health` | Suma `rtu_historico_cargado`, `rtu_modelo_entrenado`, `rtu_entrenando`, `rtu_version_modelo` y `rtu_ultimo_error` |
+| POST | `/rtu/estimacion-compra` | Body `{"horizonte_semanas": 52, "nivel_servicio": 0.95, "nuevos_ojos_por_semana": 0}` (todos opcionales). Devuelve por fármaco: compra sugerida, demanda esperada, desvío, intervalo 95%, aporte de ojos en tratamiento y de nuevos, y el cálculo sin calibrar; además el uso histórico y la calibración con sus backtests. La combinación por defecto se precalcula; otras se calculan al momento |
+| GET | `/health` | Suma `rtu_historico_cargado`, `rtu_modelo_entrenado`, `rtu_entrenando`, `rtu_compra_precalculada`, `rtu_version_modelo` y `rtu_ultimo_error` |
 
 Códigos de error RTU: 422 entrada inválida (Pydantic o incoherencia clínica: `tipo_mnv` fuera de DMRE, EMD con `diabetes: 0`); 400 fármaco desconocido, todos ya probados o Excel inválido al subir (con la lista de errores); 401 sin API key; 503 si no hay histórico RTU cargado.
 
@@ -444,10 +471,13 @@ Pruebas legacy contra el deploy (2026-09-22): validación con Pydantic (edad 0 a
 | ADR-08 | Horizonte infinito en la cadena | La matriz fundamental lo resuelve en forma cerrada; se compara contra la verdad, no contra los conteos censurados | Horizonte finito |
 | ADR-09 | Excel en R2 y no en disco de Render | Render no garantiza disco persistente entre deploys | Filesystem local |
 | ADR-10 | CORS `*` por defecto | No hay cookies ni sesión; el endpoint sensible usa `X-API-Key` | Lista fija de orígenes (configurable con `FRONTEND_ORIGINS`) |
-| ADR-11 | pgmpy fijado en 1.1.2 | `BayesianEstimator` se elimina en 1.3.0 | Actualizar sin migrar |
+| ADR-11 | pgmpy fijado en 1.1.2 (hoy solo lo usan el legacy y un test de referencia) | `BayesianEstimator` se elimina en 1.3.0 | Actualizar sin migrar |
 | ADR-12 | Evaluación de políticas con oráculo de réplicas separadas | Elegir y puntuar con la misma simulación infla el techo | Oráculo *in-sample* |
 | ADR-13 | Objetivo por defecto: maximizar P(estable) | El médico quiere saber qué fármaco tiene más chances de funcionar; las inyecciones se muestran como dato secundario | Minimizar inyecciones por defecto |
-| ADR-14 | Explicación por casos con vecinos más cercanos (k-NN) determinístico sobre las covariables | Auditable y reproducible (P1); le muestra al médico casos concretos, no solo un número. Aplica igual si la estimación viene del Camino B, que no tiene "casos" propios | Explicación generada por un LLM |
+| ADR-15 | No entrenar al arrancar el servicio; el precalentamiento lo dispara `/health` | Un primer intento entrenaba al arrancar, en otro hilo: en el plan gratuito de Render el servidor no llegó a abrir el puerto a tiempo ("port scan timeout") y el deploy falló. Con el servidor ya escuchando no hay problema | Entrenar en el evento de arranque |
+| ADR-16 | **Todo probabilidad clásica: se sigue con el grafo y se desactiva el Camino A.** El grafo se calcula con fórmulas sobre conteos de pandas, sin pgmpy | Pedido explícito: nada de *machine learning* ni IA. Las fórmulas dan exactamente lo mismo que pgmpy, se pueden seguir a mano y entrenan 40 veces más rápido. El Camino A queda comentado con `#` | Mantener los dos caminos; seguir con pgmpy |
+| ADR-17 | Estimación de compra con esperanza y varianza exactas (programación dinámica) + calibración con backtests del propio histórico | Exacto y auditable; la calibración corrige el sesgo por heterogeneidad entre ojos (desigualdad de Jensen) que el backtest mostró | Simulación Monte Carlo; usar el modelo sin calibrar; programación lineal (queda como trabajo futuro para optimizar costos) |
+| ADR-14 | Explicación por casos similares ordenados por una fórmula de distancia (determinística, sin aprendizaje) | Auditable y reproducible (P1); le muestra al médico casos concretos, no solo un número. Aplica igual si la estimación viene del Camino B, que no tiene "casos" propios | Explicación generada por un LLM |
 
 ---
 
@@ -510,7 +540,7 @@ Duración de la simulación de la verdad: 81 s en Linux, 223 s en Windows.
 
 ### 12.5 Fase 5: API RTU (local)
 
-- 28 tests automáticos pasan (`python -m pytest -q`; ~7 s en Linux, ~45 s en Windows por la importación de pgmpy).
+- 29 tests automáticos pasan (`python -m pytest -q`; ~7 s en Linux, ~45 s en Windows por la importación de pgmpy). Con ADR-16 y RF-21 pasaron a 39 (ver 12.7).
 - Con el histórico simulado completo: primera llamada 7.6 s (entrena), siguientes 0.04 s.
 - Una copia con solo los archivos que copia el `Dockerfile` importa `api.py` sin errores.
 - Tras cambiar el objetivo por defecto, `fase4_rtu.py` sigue dando exactamente los números de la sección 12.4 (usa `objetivo="inyecciones"` explícito).
@@ -522,14 +552,42 @@ Duración de la simulación de la verdad: 81 s en Linux, 223 s en Windows.
 - Primera consulta (entrena desde Excel): **88.8 s**. Siguientes: **0.71 s** (desde Montevideo, incluye red).
 - Perfil del entrenamiento en local: leer Excel 4.97 s, red factorizada 4.07 s, índice de casos 1.53 s, Camino A 0.17 s, validación 0.03 s. Leer el mismo histórico en CSV: 0.06 s.
 - Tras T5.13: entrenamiento completo local 6.6 s (Excel) → 1.8 s (CSV). [PENDIENTE] medir en Render.
+- Primer deploy de T5.14 (entrenar al arrancar): **falló** por "port scan timeout". Render mantuvo en línea la versión anterior (un deploy fallido no reemplaza al que está *live*). Corregido con ADR-15.
+- Con uvicorn real en local, tras la corrección: puerto abierto y `/health` respondiendo a los 2.3 s; `/health` responde en ~0.02 s también durante el entrenamiento.
 
-### 12.7 Hallazgos para el informe
+### 12.7 Grafo con fórmulas y estimación de compra (2026-09-24, local)
+
+- Grafo con fórmulas contra pgmpy: diferencia máxima 0 (factorizada) y 2·10⁻¹⁶ (completa) en 5.400 consultas, incluidas con datos faltantes. Entrenamiento: 0.10 s contra 3.86 s.
+- Evaluación de la fase 3 con el grafo nuevo: resultados idénticos a 12.3 (Brier 0.2326, acierto 0.503).
+- Arranque con uvicorn: puerto abierto a los 2.2 s; modelo entrenado 2.0 s después (antes 7.6 s); compra por defecto precalculada a los 16.8 s. Con caché responde al instante; otra combinación con la misma calibración, 2.9 s.
+- 39 tests pasan, entre ellos: esperanza y varianza exactas contra Monte Carlo de la misma dinámica, y que ningún módulo del sistema importe librerías de aprendizaje automático.
+
+### 12.8 Backtest y calibración de la compra
+
+Parado en la semana 104, pronóstico de las 52 semanas siguientes con datos hasta la 104:
+
+| Fármaco | Modelo sin calibrar | Esperanza verdadera* | Realidad (una realización) | Compra 95% calibrada | ¿Alcanzó? |
+|---|---|---|---|---|---|
+| FarmacoA | 3.164 ± 41 | 3.284 | 3.185 | 3.417 | Sí |
+| FarmacoB | 1.566 ± 34 | 1.647 | 1.673 | 1.794 | Sí |
+| FarmacoC | 733 ± 27 | 774 | 837 | 919 | Sí |
+
+\* Simulando esa misma cohorte 40 veces con sus parámetros verdaderos (solo posible con datos simulados).
+
+- El modelo sin calibrar subestima entre 4% y 5% a todos los fármacos y su desvío es demasiado chico: los ojos de un mismo perfil son heterogéneos, y como las inyecciones no crecen linealmente con la actividad, usar la probabilidad promedio sesga (desigualdad de Jensen) y omite varianza.
+- Un ajuste por ojo con la razón observado/esperado **no mejoró** el backtest y se descartó.
+- Calibración con ventanas que arrancan en las semanas 13, 26, 39 y 52: factor 0.98, inflación 4.6. La inflación es alta porque el sesgo cambia con la etapa de la cohorte (en el simulador todos los pacientes empiezan el mismo día; en la ventana de la semana 13 el modelo sobreestima 14%, en las siguientes subestima). Con esa calibración la compra al 95% alcanzó para los tres fármacos, con 7 a 10% de margen.
+- Pronóstico desde el final del histórico (semana 208, 859 ojos en tratamiento, 52 semanas, 95%): factor 1.04, inflación 1.37 (cohorte madura, más estable). Compra sugerida: FarmacoA 2.141, FarmacoB 1.131, FarmacoC 523, sin pacientes nuevos. Cada ojo nuevo que ingresa suma en promedio 5.4 dosis de A, 2.3 de B y 1.0 de C en ese horizonte.
+
+### 12.9 Hallazgos para el informe
 
 1. **Maldición de la dimensionalidad:** la red completa rinde peor que no usar covariables; la factorizada es la mejor prediciendo visitas.
 2. **Sesgo de selección:** sin estratificar por línea, FarmacoC queda subestimado y el ranking se degrada.
 3. **Significancia no es relevancia:** la dependencia entre fármacos es muy significativa, pero corregirla casi no cambia las decisiones porque pocos ojos llegan a la segunda posición (P(switch) ≈ 5-10%).
 4. **Techo de personalización bajo:** solo con covariables se acierta el mejor fármaco en ~60% de los ojos; queda una brecha de ~2 inyecciones por ojo hasta el oráculo, atribuible a la respuesta individual del ojo.
 5. **Estratificar a mano no escala:** el Camino A con covariables rinde peor que el orden poblacional en la evaluación de políticas.
+6. **El grafo es probabilidad clásica:** calculado con conteos y la regla de Bayes, da exactamente lo mismo que una librería especializada y es 40 veces más rápido.
+7. **Promediar no alcanza para planificar compras:** la heterogeneidad entre pacientes sesga la esperanza (Jensen) y subestima la varianza; calibrar con backtests del propio histórico lo corrige, y la compra calibrada al 95% alcanzó en la validación.
 
 ---
 
@@ -554,11 +612,11 @@ Estado: T5.1 a T5.12 **[HECHO]**. Desplegada en Render el 2026-09-23. Queda una 
 | T5.7 | Agregar los módulos RTU al `Dockerfile` | El build en Render levanta sin errores de import |
 | T5.8 | Tests automáticos (pytest): casos límite de Markov, validador, endpoint con datos simulados | Corren en local |
 | T5.9 | Medir latencia en caliente, arranque en frío y memoria en Render | Números documentados en la sección 12 (RNF-04 a 06) |
-| T5.10 | Módulo `explicacion_rtu.py`: k-NN determinístico sobre las covariables del paciente (distancia definida y documentada), resumen de desenlaces por fármaco entre los vecinos y listado de los N más parecidos | Mismo caso → mismos vecinos; ningún dato personal en la salida (RF-19, RF-20) |
+| T5.10 | Módulo `explicacion_rtu.py`: búsqueda por fórmula de distancia sobre las covariables del paciente (determinística, documentada), resumen de desenlaces por fármaco entre los vecinos y listado de los N más parecidos | Mismo caso → mismos vecinos; ningún dato personal en la salida (RF-19, RF-20) |
 | T5.11 | Evaluar si los desenlaces de los vecinos concuerdan con la estimación del modelo y advertir cuando discrepan mucho | Advertencia visible en la respuesta |
 | T5.12 | Cambiar el objetivo por defecto a `estable` en `recomendar()` y `recomendar_por_linea()` (ADR-13) | Tests actualizados |
 | T5.13 | Al subir el histórico, guardar también una copia CSV en R2 y entrenar desde ella | Entrenamiento local de 6.6 s a 1.8 s; misma recomendación desde CSV y Excel (test) |
-| T5.14 | Entrenar en segundo plano al arrancar y después de cada carga | `/health` informa `rtu_entrenando`; test de precalentamiento |
+| T5.14 | Entrenar en segundo plano cuando se llama a `/health` y después de cada carga. **Nunca al arrancar** (ADR-15) | `/health` responde en el acto e informa `rtu_entrenando`; sin entrenamientos duplicados; test de regresión de que el arranque no entrena |
 | T5.15 | Mostrar como máximo un ojo por paciente en `casos_similares` | Test: ningún paciente repetido |
 
 **Contrato de `POST /rtu/sugerir-plan`** [HECHO]:
@@ -592,7 +650,7 @@ Respuesta:
 | `orden_sugerido` | Fármacos ordenados según el objetivo |
 | `valor_orden` | P(estable), inyecciones esperadas y P(agotar opciones) de la secuencia |
 | `por_farmaco` | Para cada fármaco: P(estable), P(switch), P(abandono), inyecciones, visitas y semanas esperadas |
-| `base_de_calculo` | Para cada fármaco: cuántos casos del histórico sustentan la estimación y con qué criterio de similitud (en el Camino A, el nivel usado y k/n) |
+| `base_de_calculo` | Para cada fármaco: cuántos casos del histórico sustentan la estimación, cómo terminaron y la actividad observada frente a la estimada |
 | `casos_similares` | Los N ojos más parecidos del histórico (ID anónimo, subtipo, edad, comorbilidades, distancia) con su evolución: fármacos recibidos, línea, desenlace, inyecciones |
 | `supuestos` | Copia de los valores vigentes del protocolo |
 | `advertencias` | Por ejemplo: "basado en datos simulados", "pocos casos similares para FarmacoC" |
@@ -600,7 +658,7 @@ Respuesta:
 | `metodo`, `objetivo`, `linea`, `farmacos_ya_probados` | Eco de la solicitud; `linea` = fármacos ya probados + 1 |
 | `criterio_similitud` | Pesos de la distancia, K usado y línea considerada |
 
-En `base_de_calculo`, con `metodo: beta` se agrega `camino_A_q6_8` (k, n y nivel de similitud del Camino A). Si hay pocos ciclos parecidos con un fármaco, o si la actividad observada en los casos similares difiere más de 0.15 de la estimada por el modelo, se agrega una advertencia.
+`metodo` solo admite `red_factorizada` (el Camino A está desactivado, ADR-16). Si hay pocos ciclos parecidos con un fármaco, o si la actividad observada en los casos similares difiere más de 0.15 de la estimada por el modelo, se agrega una advertencia.
 
 ### Fase 6: frontend [PENDIENTE]
 
@@ -635,14 +693,14 @@ En `base_de_calculo`, con `metodo: beta` se agrega `camino_A_q6_8` (k, n y nivel
 
 ### Fase 9: informe y presentación [PENDIENTE]
 
-Escribir los hallazgos de la sección 12.7, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
+Escribir los hallazgos de la sección 12.9, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
 
 ### Trabajo futuro (fuera de alcance)
 
 - Validación clínica de los supuestos y obtención de datos reales, con las autorizaciones que correspondan.
 - Red neuronal sobre imágenes OCT para detectar actividad (hay equipos de cuatro fabricantes, lo que complica generalizar).
 - Modelo jerárquico bayesiano por subgrupos.
-- Optimización de compras de fármacos con programación lineal.
+- Optimización de compras con programación lineal (minimizar costo sujeto a cubrir la demanda calibrada con una probabilidad dada), sobre la estimación de RF-21. Requiere precios reales.
 - Más fármacos y protocolos diferenciados por patología.
 
 ---
@@ -661,7 +719,7 @@ Escribir los hallazgos de la sección 12.7, las limitaciones (sección 14) y el 
 
 - Supuestos clínicos no validados (sección 8).
 - El abandono domina en horizonte infinito (~45%); el 2% por visita es un supuesto a revisar.
-- Evaluación circular: los datos los generan supuestos propios; con datos reales solo quedan las métricas marcadas "Sí" en la sección 7.4.
+- Evaluación circular: los datos los generan supuestos propios; con datos reales solo quedan las métricas marcadas "Sí" en la sección 7.5 y el backtest de compras (12.8).
 - `p_activo` depende del intervalo pero no de los contadores del estado (simplificación).
 - Los dos ojos de un paciente se modelan con un efecto compartido, pero la recomendación trata cada ojo por separado.
 
@@ -669,8 +727,11 @@ Escribir los hallazgos de la sección 12.7, las limitaciones (sección 14) y el 
 
 - Arranque en frío del plan gratuito de Render.
 - Recursos del plan de Render con pgmpy y sus dependencias (RNF-06, Q-05).
+- Trabajo pesado durante el arranque: puede impedir que Render detecte el puerto y hacer fallar el deploy (ADR-15). Todo entrenamiento debe ocurrir con el servidor ya escuchando.
+- Un deploy fallido no se nota en producción, porque sigue en línea la versión anterior: después de cada push, confirmar en **Events** que el deploy quedó *live* y chequear en `/health` los campos esperados.
 - Mostrar casos al médico: riesgo de reidentificación si en el futuro se usan datos reales con pocos casos por celda. Mitigación: solo IDs anónimos y no mostrar celdas con muy pocos casos.
-- pgmpy 1.3 elimina `BayesianEstimator`: migrar antes de actualizar.
+- pgmpy 1.3 elimina `BayesianEstimator`: afecta solo al legacy y al test de referencia. Cuando se deprequen los endpoints legacy (T7.7) se puede quitar pgmpy de `requirements.txt`.
+- La calibración de compras supone que el sesgo medido en ventanas pasadas se mantiene. Con datos reales conviene revisarla periódicamente.
 - Endpoints legacy y RTU conviviendo: riesgo de subir el Excel equivocado al objeto equivocado (mitigado por T5.1 y T5.2).
 
 ---
@@ -683,7 +744,9 @@ Escribir los hallazgos de la sección 12.7, las limitaciones (sección 14) y el 
 | Q-02 | ¿Se usa `api-vacunas`? | **Resuelta:** fue la primera versión y no se usa (T7.6). |
 | Q-03 | Objetivo de la recomendación | **Resuelta:** recomendar al médico los fármacos con más chances de funcionar y mostrar en qué casos similares se basó el cálculo (ADR-13, ADR-14, RF-19). |
 | Q-04 | ¿Se incluye el resumen por LLM (RF-18)? | Sin decidir |
-| Q-05 | Recursos del plan de Render | Informado: 10 GB. [A CONFIRMAR] a qué recurso corresponde (RAM, disco o ancho de banda): lo crítico para pgmpy es la RAM. |
+| Q-05 | Recursos del plan de Render | Informado: 10 GB. [A CONFIRMAR] a qué recurso corresponde (RAM, disco o ancho de banda); lo crítico es la RAM. |
+| Q-09 | Unidad de compra: ¿1 dosis = 1 inyección = 1 vial? ¿Hay mínimos de compra, vencimientos o presentaciones de varios viales? | [A CONFIRMAR] hoy se supone 1 = 1 = 1 |
+| Q-10 | Tasa de pacientes nuevos por semana | [A CONFIRMAR] el histórico simulado no tiene fechas reales; hoy es un dato de entrada (default 0) |
 | Q-06 | Contacto clínico para validar supuestos | Diferido hasta tener el sistema listo |
 | Q-07 | ¿El frontend va en un repo aparte o en una carpeta de este? | [A DECIDIR] (T6.0) |
 | Q-08 | Métrica de distancia para los casos similares | Implementada una [PROPUESTA] en `explicacion_rtu.PESOS_DISTANCIA`: subtipo (0 / 1 / 3), edad por década (1) y 0.5 por comorbilidad distinta. Revisar con un clínico. |
@@ -729,7 +792,8 @@ uvicorn api:app --reload
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest -q                                   # 28 tests
+python -m pytest -q                                   # 39 tests
+python compras_rtu.py                                 # backtest y estimación de compra
 $env:RTU_HISTORICO_LOCAL = "historico_rtu_SIMULADO.xlsx"
 uvicorn api:app --reload                              # abrir http://127.0.0.1:8000/docs
 ```
@@ -753,6 +817,8 @@ Para activar el RTU en Render (T5.9), una sola vez:
 
 Cada vez que se sube un histórico nuevo, el servicio reentrena solo en segundo plano; mientras tanto, `/health` muestra `rtu_entrenando: true`.
 
+Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log del deploy en **Events**; si dice "port scan timeout", algo está bloqueando el arranque (ver ADR-15).
+
 ---
 
 ## 17. Registro de cambios
@@ -765,3 +831,5 @@ Cada vez que se sube un histórico nuevo, el servicio reentrena solo en segundo 
 | 2026-09-22 | Resueltas Q-01 a Q-03: no hay frontend todavía; `api-vacunas` en desuso; objetivo = fármacos con más chances de funcionar + explicación por casos similares (RF-19, RF-20, ADR-13, ADR-14, T5.10 a T5.12, T6.0 y T6.3). |
 | 2026-09-23 | Fase 5 en local: endpoints RTU, validador, casos similares, servicio con caché por ETag, objetivo por defecto `estable`, 25 tests, `Dockerfile` actualizado. Pendiente T5.9 (deploy y mediciones). |
 | 2026-09-23 | Fase 5 desplegada en Render: histórico RTU en R2, 0.71 s por consulta, 88.8 s la primera. Mejoras T5.13 (copia CSV) y T5.14 (precalentamiento) y T5.15 (un ojo por paciente); `.gitignore` agregado. |
+| 2026-09-23 | Deploy de T5.14 falló por "port scan timeout" (entrenar al arrancar). Corregido: el precalentamiento lo dispara `/health` (ADR-15). 29 tests. |
+| 2026-09-24 | ADR-16: todo probabilidad clásica; se sigue con el grafo (reimplementado con fórmulas en pandas, sin pgmpy) y el Camino A queda comentado con `#`. RF-21/22 y ADR-17: estimación de compra con esperanza y varianza exactas y calibración por backtest; endpoint `/rtu/estimacion-compra`. 39 tests. |

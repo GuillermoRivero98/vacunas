@@ -10,6 +10,7 @@ Endpoints:
 RTU (inyecciones intravítreas, ver README):
   POST /rtu/sugerir-plan                -> recomendación + casos similares
   POST /admin/rtu/actualizar-historico  -> sube, valida y activa el histórico RTU
+  POST /rtu/estimacion-compra           -> demanda y compra sugerida por fármaco
 
 El Excel histórico vive en Cloudflare R2 (ver almacenamiento_r2.py) --
 Render (plan gratis/starter) no garantiza disco persistente entre
@@ -55,15 +56,6 @@ servicio_rtu = ServicioRTU(
     datos_simulados=datos_simulados_desde_entorno(),
 )
 
-
-@app.on_event("startup")
-def _precalentar_rtu():
-    # Render (plan gratuito) duerme el servicio tras un rato sin uso y lo
-    # reinicia al despertarlo: sin esto, el primer médico que consulta
-    # paga el entrenamiento completo. Con esto, entrena apenas arranca,
-    # en segundo plano (la API responde /health mientras tanto).
-    if precalentar_desde_entorno():
-        servicio_rtu.precalentar_en_segundo_plano()
 
 # Habilita que el frontend (Cloudflare Pages, otro origen) llame a esta
 # API desde el navegador. "*" es deliberadamente permisivo: no hay
@@ -112,6 +104,13 @@ def health():
     # se entrenó en memoria (ocurre en el primer /rtu/sugerir-plan).
     rtu_cargado = (os.path.exists(_path_local_rtu) if _path_local_rtu
                    else almacenamiento_r2.excel_disponible(almacenamiento_r2.R2_OBJECT_KEY_RTU))
+    # Precalentamiento: si hay histórico y el modelo no está entrenado, se
+    # entrena en segundo plano y /health responde en el acto. No se hace
+    # al arrancar el servicio (ver servicio_rtu.precalentar_en_segundo_plano).
+    # Render duerme el servicio tras un rato sin uso: llamar a /health antes
+    # de usar el sistema lo despierta y lo deja entrenado.
+    if rtu_cargado and precalentar_desde_entorno() and not servicio_rtu.estado()["rtu_modelo_entrenado"]:
+        servicio_rtu.precalentar_en_segundo_plano()
     return {
         "status": "ok",
         "excel_cargado": almacenamiento_r2.excel_disponible(),
@@ -198,7 +197,9 @@ class CasoRTU(BaseModel):
     tabaquismo: Literal[0, 1] | None = None
     farmacos_ya_probados: list[str] = Field(default_factory=list)
     objetivo: Literal["estable", "inyecciones"] = "estable"
-    metodo: Literal["red_factorizada", "beta"] = "red_factorizada"
+    # Único método: el grafo probabilístico. "beta" (Camino A) está
+    # desactivado (ADR-16); reactivarlo requiere agregarlo acá.
+    metodo: Literal["red_factorizada"] = "red_factorizada"
     n_casos_similares: int = Field(default=10, ge=1, le=50)
 
     @model_validator(mode="after")
@@ -263,3 +264,23 @@ async def rtu_actualizar_historico(archivo: UploadFile = File(...), _=Depends(ve
     servicio_rtu.precalentar_en_segundo_plano()
     return {"status": "actualizado", "pacientes": int(df["paciente_id"].nunique()),
             "visitas": len(df), "farmacos": sorted(df["farmaco"].astype(str).unique())}
+
+
+class ParametrosCompra(BaseModel):
+    horizonte_semanas: int = Field(default=52, ge=4, le=104)
+    nivel_servicio: float = Field(default=0.95, ge=0.5, le=0.999)
+    nuevos_ojos_por_semana: float = Field(default=0.0, ge=0.0, le=1000.0)
+
+
+@app.post("/rtu/estimacion-compra")
+def rtu_estimacion_compra(parametros: ParametrosCompra):
+    """Demanda esperada de cada fármaco en el horizonte y compra sugerida
+    para el nivel de servicio pedido (probabilidad de que alcance).
+    La combinación por defecto se precalcula en segundo plano; otras
+    combinaciones se calculan en el momento (puede tardar)."""
+    try:
+        return servicio_rtu.estimar_compra(**parametros.model_dump())
+    except HistoricoNoDisponible as e:
+        raise HTTPException(503, str(e))
+    except EsquemaInvalido as e:
+        raise HTTPException(500, {"mensaje": "El histórico RTU cargado no es válido.", "errores": e.errores})

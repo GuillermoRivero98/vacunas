@@ -27,11 +27,12 @@ import pandas as pd
 
 from esquema_rtu import leer_y_validar
 from estimacion_rtu import (
-    EstimadorBeta,
     EstimadorRedBayesiana,
     recomendar_por_linea,
 )
+# from estimacion_rtu import EstimadorBeta   # Camino A desactivado (ADR-16)
 from explicacion_rtu import TIEMPO_DISCREPANCIA, IndiceCasos
+import compras_rtu
 from supuestos_protocolo import SUPUESTOS_DEFAULT
 
 # () -> (etag, fuente, formato). etag es None si no hay histórico
@@ -43,6 +44,13 @@ ADVERTENCIA_SUPUESTOS = ("Los supuestos del protocolo (intervalos, criterios de 
                          "estabilidad, abandono) no están validados clínicamente.")
 ADVERTENCIA_SIMULADOS = "Los resultados se basan en datos SIMULADOS, no en pacientes reales."
 ADVERTENCIA_MEDICO = "La decisión final es del médico tratante."
+
+
+COMPRA_POR_DEFECTO = {"horizonte_semanas": 52, "nivel_servicio": 0.95, "nuevos_ojos_por_semana": 0.0}
+
+
+def _clave_compra(horizonte_semanas: int, nivel_servicio: float, nuevos_ojos_por_semana: float) -> tuple:
+    return (int(horizonte_semanas), round(float(nivel_servicio), 4), round(float(nuevos_ojos_por_semana), 4))
 
 
 class HistoricoNoDisponible(RuntimeError):
@@ -63,6 +71,9 @@ class _Modelo:
     n_visitas: int
     estimadores: dict
     indice: IndiceCasos
+    datos: pd.DataFrame
+    compras: dict = dataclasses.field(default_factory=dict)       # (H, nivel, lambda) -> resultado
+    calibraciones: dict = dataclasses.field(default_factory=dict)  # H -> calibración
 
 
 class ServicioRTU:
@@ -73,6 +84,7 @@ class ServicioRTU:
         self._lock = threading.Lock()
         self._entrenando = False
         self._ultimo_error: str | None = None
+        self._hilo: threading.Thread | None = None
 
     # ------------------------------------------------------------------
     # Estado del modelo
@@ -86,25 +98,38 @@ class ServicioRTU:
         m = self._modelo
         return {
             "rtu_modelo_entrenado": m is not None,
+            "rtu_compra_precalculada": m is not None and _clave_compra(**COMPRA_POR_DEFECTO) in m.compras,
             "rtu_entrenando": self._entrenando,
             "rtu_version_modelo": None if m is None else {"etag": m.etag, "entrenado_en": m.entrenado_en},
             "rtu_ultimo_error": self._ultimo_error,
         }
 
     def precalentar_en_segundo_plano(self) -> None:
-        """Entrena en un hilo aparte, sin bloquear el arranque de la API
-        ni el request que lo dispara. Si no hay histórico, no hace nada.
-        Se usa al iniciar el servicio (Render lo reinicia al despertarlo)
-        y después de cada carga de histórico."""
+        """Entrena en un hilo aparte, sin bloquear el request que lo
+        dispara. Si ya hay un entrenamiento en curso, no lanza otro. Si
+        no hay histórico, no hace nada.
+
+        NO se llama al arrancar el servicio: en el plan gratuito de Render,
+        entrenar durante el arranque (aun en otro hilo, por el GIL de
+        Python) impidió que el servidor abriera su puerto a tiempo y el
+        deploy falló por "port scan timeout". Se dispara desde /health y
+        después de cada carga de histórico, con el servidor ya escuchando."""
+        if self._hilo is not None and self._hilo.is_alive():
+            return
+
         def tarea():
             try:
                 self.modelo()
+                # Precalcula la estimación de compra por defecto (la más lenta:
+                # incluye los backtests de calibración).
+                self.estimar_compra(**COMPRA_POR_DEFECTO)
                 self._ultimo_error = None
             except HistoricoNoDisponible:
                 pass
             except Exception as e:  # queda visible en /health
                 self._ultimo_error = f"{type(e).__name__}: {e}"
-        threading.Thread(target=tarea, name="precalentar-rtu", daemon=True).start()
+        self._hilo = threading.Thread(target=tarea, name="precalentar-rtu", daemon=True)
+        self._hilo.start()
 
     def _entrenar(self, etag: str, fuente, formato: str) -> _Modelo:
         df = leer_y_validar(fuente, formato)
@@ -117,9 +142,10 @@ class ServicioRTU:
             n_visitas=len(df),
             estimadores={
                 "red_factorizada": EstimadorRedBayesiana(df, "factorizada"),
-                "beta": EstimadorBeta(df),
+                # "beta": EstimadorBeta(df),   # Camino A desactivado (ADR-16)
             },
             indice=IndiceCasos(df),
+            datos=df,
         )
 
     def modelo(self) -> _Modelo:
@@ -163,11 +189,12 @@ class ServicioRTU:
         p_q8 = {f: est.p(caso, f, TIEMPO_DISCREPANCIA, linea) for f in candidatos}
         explicacion = m.indice.explicar(caso, candidatos, linea, n_casos_similares, p_q8)
 
-        if metodo == "beta":
-            for f in candidatos:
-                det = est.detalle(caso, f, TIEMPO_DISCREPANCIA, linea)
-                explicacion["base_de_calculo"][f]["camino_A_q6_8"] = {
-                    "k_activos": det.k, "n_visitas": det.n, "nivel_similitud": det.nivel}
+        # Camino A desactivado (ADR-16): agregaba k/n y nivel de similitud.
+        # if metodo == "beta":
+        #     for f in candidatos:
+        #         det = est.detalle(caso, f, TIEMPO_DISCREPANCIA, linea)
+        #         explicacion["base_de_calculo"][f]["camino_A_q6_8"] = {
+        #             "k_activos": det.k, "n_visitas": det.n, "nivel_similitud": det.nivel}
 
         por_farmaco = sorted((
             {"farmaco": f,
@@ -199,6 +226,34 @@ class ServicioRTU:
             "version_modelo": {"etag": m.etag, "entrenado_en": m.entrenado_en,
                                "pacientes": m.n_pacientes, "ojos": m.n_ojos, "visitas": m.n_visitas},
         }
+
+
+
+    # ------------------------------------------------------------------
+    # Estimación de compra (RF-21)
+    # ------------------------------------------------------------------
+
+    def estimar_compra(self, horizonte_semanas: int = 52, nivel_servicio: float = 0.95,
+                       nuevos_ojos_por_semana: float = 0.0) -> dict:
+        """Demanda y compra sugerida por fármaco. Cachea por versión del
+        histórico: la calibración (lo más lento) se calcula una vez por
+        horizonte; cambiar el nivel de servicio o la tasa de nuevos no la
+        recalcula."""
+        m = self.modelo()
+        clave = _clave_compra(horizonte_semanas, nivel_servicio, nuevos_ojos_por_semana)
+        if clave not in m.compras:
+            H = int(horizonte_semanas)
+            if H not in m.calibraciones:
+                corte = int(m.datos["semana"].max())
+                m.calibraciones[H] = compras_rtu.calibrar(m.datos, corte, H)
+            r = compras_rtu.estimar_compra(m.datos, H, nivel_servicio, nuevos_ojos_por_semana,
+                                           calibracion=m.calibraciones[H])
+            r["advertencias"] = [ADVERTENCIA_SUPUESTOS] + ([ADVERTENCIA_SIMULADOS] if self._datos_simulados else [])
+            if m.calibraciones[H].get("advertencia"):
+                r["advertencias"].append(m.calibraciones[H]["advertencia"])
+            r["version_modelo"] = {"etag": m.etag, "entrenado_en": m.entrenado_en}
+            m.compras[clave] = r
+        return m.compras[clave]
 
 
 def cargador_r2() -> Cargador:

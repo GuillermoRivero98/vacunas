@@ -27,7 +27,7 @@ COPY api.py motor_probabilidades.py generar_reporte.py almacenamiento_r2.py red_
 
 # Módulos RTU (fase 5). generar_datos_rtu.py, evaluar_rtu.py, fase4_rtu.py
 # y tests/ son herramientas offline: no van a la imagen.
-COPY supuestos_protocolo.py markov_rtu.py estimacion_rtu.py esquema_rtu.py explicacion_rtu.py servicio_rtu.py ./
+COPY supuestos_protocolo.py markov_rtu.py estimacion_rtu.py esquema_rtu.py explicacion_rtu.py servicio_rtu.py compras_rtu.py ./
 
 # El Excel histórico se monta como volumen o se sube vía
 # /admin/actualizar-historico -- no se hornea en la imagen.
