@@ -1,9 +1,17 @@
 import type { Compra, Info, Plan, Salud, SolicitudCompra, SolicitudPlan } from "./tipos";
 
-const BASE = (import.meta.env.VITE_API_URL as string).replace(/\/$/, "");
+// Dirección de la API: sale de frontend/.env.production (o .env.development).
+// Si ese archivo no llegó a la compilación, se usa la de Render y se avisa en
+// la consola, en lugar de dejar la página en blanco.
+const API_POR_DEFECTO = "https://vacunas-mwyr.onrender.com";
+const configurada = import.meta.env.VITE_API_URL as string | undefined;
+if (!configurada) {
+  console.warn(`VITE_API_URL no está definida en la compilación; se usa ${API_POR_DEFECTO}.`);
+}
+const BASE = (configurada ?? API_POR_DEFECTO).replace(/\/$/, "");
 
 export class ErrorApi extends Error {
-  constructor(public estado: number, public detalles: string[]) {
+  constructor(public estado: number, public detalles: string[], public ruta = "") {
     super(detalles.join(" "));
   }
 }
@@ -66,7 +74,14 @@ async function pedir<T>(ruta: string, opciones: RequestInit = {}, timeoutMs = 90
     } catch {
       /* respuesta sin JSON */
     }
-    throw new ErrorApi(resp.status, detallesDeError(cuerpo.detail));
+    // La API nunca devuelve 404 a propósito (sin histórico responde 503):
+    // un 404 significa que el servidor no tiene esa ruta.
+    if (resp.status === 404) {
+      throw new ErrorApi(404, [
+        `La API en ${BASE} respondió, pero no tiene ${ruta}. Probablemente el servidor tiene una versión anterior: revisá que el último deploy de Render haya terminado bien.`,
+      ], ruta);
+    }
+    throw new ErrorApi(resp.status, detallesDeError(cuerpo.detail), ruta);
   }
   return resp.json() as Promise<T>;
 }

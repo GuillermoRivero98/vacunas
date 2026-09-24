@@ -54,6 +54,12 @@ export default function App() {
           }
           setServidor({ fase: "preparando" });
         } catch (e) {
+          // 404: el servidor responde pero le falta un endpoint (versión vieja).
+          // Reintentar no lo arregla: se informa en el acto.
+          if (e instanceof ErrorApi && e.estado === 404) {
+            if (vivo) setServidor({ fase: "error", mensaje: e.detalles.join(" ") });
+            return;
+          }
           if (intento >= 5) {
             setServidor({ fase: "error", mensaje: mensajes(e).join(" ") });
             return;

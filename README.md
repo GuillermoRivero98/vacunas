@@ -113,7 +113,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-11 | Endpoint de API que devuelva la recomendación para un caso (`POST /rtu/sugerir-plan`). | [HECHO] en local; deploy pendiente (T5.9) |
 | RF-12 | Endpoint protegido para cargar el histórico RTU en R2 y reentrenar (`POST /admin/rtu/actualizar-historico`). | [HECHO] en local; deploy pendiente (T5.9) |
 | RF-13 | Validar el esquema del Excel RTU al subirlo y rechazar con mensaje claro si no cumple. | [HECHO] |
-| RF-14 | Frontend: formulario del paciente, recomendación con explicación y pantalla de compra. | [HECHO] en local; deploy [PENDIENTE] (T6.5) |
+| RF-14 | Frontend: formulario del paciente, recomendación con explicación y pantalla de compra. | [HECHO] publicado en https://vacunas.pages.dev |
 | RF-15 | Excluir fármacos ya probados y calcular la línea a partir de ellos. | [HECHO] |
 | RF-16 | Reporte PDF del resultado RTU. | [PENDIENTE] Opcional |
 | RF-17 | Personalizar `p_activo` con la historia observada del propio ojo. | [PENDIENTE] Fase 8, opcional |
@@ -133,7 +133,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RNF-04 | Latencia de `/rtu/sugerir-plan` con el modelo entrenado | < 2 s | [HECHO] Render: 0.71-0.72 s medido desde Montevideo (incluye red). `/rtu/estimacion-compra` con caché: instantáneo. |
 | RNF-05 | Arranque en frío en Render | El entrenamiento no debe recaer en la consulta del médico. | [HECHO] Antes: 88.8 s en la primera consulta (entrenando desde Excel, con pgmpy). Ahora (CSV + grafo con fórmulas + precalentamiento por `/health`): modelo entrenado en menos de 7 s tras la carga; compra por defecto precalculada a los ~79 s, en segundo plano. Antes de usar el sistema, llamar a `/health` y esperar `rtu_modelo_entrenado: true`. |
 | RNF-06 | Memoria | La imagen debe entrar en los recursos del plan de Render. El sistema RTU ya no carga pgmpy (solo lo usa el legacy). | [A CONFIRMAR] qué recurso son los 10 GB informados (ver Q-05) y consumo real de RAM |
-| RNF-07 | Seguridad | Endpoints de administración con `X-API-Key`; secretos solo en variables de entorno; el Excel nunca queda público. | [HECHO] en legacy; replicar en RTU |
+| RNF-07 | Seguridad | Endpoints de administración con `X-API-Key`; secretos solo en variables de entorno; el Excel nunca queda público; la API solo acepta pedidos de navegador desde el frontend (`FRONTEND_ORIGINS`). | [HECHO] |
 | RNF-08 | Privacidad | Sin datos de pacientes reales en el repo ni en R2 hasta tener autorización formal. | Vigente |
 | RNF-09 | Compatibilidad | Python 3.12; versiones fijadas en `requirements.txt`. | [HECHO] |
 | RNF-10 | Mantenibilidad | Módulos RTU aditivos, sin romper los endpoints legacy mientras convivan. | Vigente |
@@ -147,11 +147,11 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 
 ```mermaid
 flowchart LR
-    U[Médico / navegador] -.->|Fase 6| FE[Frontend React<br/>frontend/ → Cloudflare Pages]
-    FE -.->|HTTPS JSON| API[API FastAPI<br/>Render, Docker]
+    U[Médico / navegador] --> FE[Frontend React<br/>vacunas.pages.dev]
+    FE -->|HTTPS JSON| API[API FastAPI<br/>Render, Docker]
     API --> R2[(Cloudflare R2<br/>Excel histórico)]
     API --> LEG[Módulos legacy<br/>vacunas]
-    API -.->|Fase 5| RTU[Módulos RTU<br/>Markov + estimación]
+    API --> RTU[Módulos RTU<br/>Markov + estimación + compras]
     GH[GitHub<br/>GuillermoRivero98/vacunas] -->|push a main| API
 ```
 
@@ -162,7 +162,7 @@ flowchart LR
 | GitHub | Repositorio del backend | `GuillermoRivero98/vacunas`, rama `main`. Cada push dispara el deploy en Render. | [HECHO] |
 | Render | Hosting del backend | Docker, plan gratuito, `https://vacunas-mwyr.onrender.com`. Límite informado en el panel: 10 GB (ver Q-05). | [HECHO] |
 | Cloudflare R2 | Almacenamiento del Excel histórico | Bucket por defecto `vacunas-historico`. Objetos: `historico_vacunas.xlsx` (legacy), `historico_rtu.xlsx` (RTU, original) e `historico_rtu.csv` (RTU, copia que lee el entrenamiento; se genera al subir). Acceso autenticado vía API S3 (boto3). | [HECHO] |
-| Cloudflare Pages | Hosting del frontend | **Todavía no hay frontend.** Se construye en la fase 6 (React, despliegue con `wrangler`). Hoy el requisito de usar Cloudflare lo cumple R2. | [PENDIENTE] |
+| Cloudflare Pages | Hosting del frontend | Proyecto `vacunas`, dominio **https://vacunas.pages.dev**. Conectado a GitHub: cada push a `main` publica solo. Build: carpeta raíz `frontend`, comando `npm run build`, salida `dist`. | [HECHO] |
 
 ### 5.3 Variables de entorno (Render → Environment)
 
@@ -173,7 +173,7 @@ flowchart LR
 | `R2_ACCESS_KEY_ID` | Access Key del token R2. | Sí |
 | `R2_SECRET_ACCESS_KEY` | Secret Key del token R2. | Sí |
 | `R2_BUCKET_NAME` | Bucket del Excel. | No (default `vacunas-historico`) |
-| `FRONTEND_ORIGINS` | Restringe CORS a orígenes separados por coma. | No (default `*`) |
+| `FRONTEND_ORIGINS` | Restringe CORS a orígenes separados por coma. Configurado: `https://vacunas.pages.dev`. Las direcciones de deploys puntuales (`xxxx.vacunas.pages.dev`) quedan fuera a propósito. | No (default `*`) |
 | `RTU_DATOS_SIMULADOS` | Si es `true`, la respuesta RTU advierte que los datos son simulados. Poner `false` recién con datos reales. | No (default `true`) |
 | `RTU_PRECALENTAR` | Si es `true`, la primera llamada a `/health` (con histórico cargado y sin modelo) dispara el entrenamiento RTU en segundo plano. | No (default `true`) |
 | `RTU_HISTORICO_LOCAL` | **Solo desarrollo:** ruta a un Excel RTU local en vez de R2. No configurarla en Render. | No |
@@ -387,6 +387,7 @@ Glaucoma y cristalino **no se usan** por decisión de diseño (ADR-07).
 
 ### 9.3 Política de archivos de datos
 
+- `frontend/.env.production` y `frontend/.env.development` **sí** van al repo: solo contienen la dirección pública de la API.
 - Los Excel **no se suben al repo**: se regeneran con `python generar_datos_rtu.py .` (semilla fija, resultado idéntico).
 - La verdad oculta **nunca** va a R2 ni a producción.
 - El histórico RTU **no reemplaza** al Excel legacy en R2: la API legacy espera otro esquema y se rompería.
@@ -599,7 +600,17 @@ Parado en la semana 104, pronóstico de las 52 semanas siguientes con datos hast
 - Probado por el usuario en Windows (API local + `npm run dev`): `/health`, `/rtu/info`, plan y compra responden 200. La tipografía carga bien en un navegador real.
 - Ajustes posteriores: el error de conexión indica a qué dirección intentó conectarse (antes sugería revisar internet aunque la causa fuera la API apagada); ícono de la página (evita el 404 de `favicon.ico`); dibujo del grafo en `estimacion_rtu.py` sin barras invertidas, que generaban el aviso `invalid escape sequence` en los tests.
 
-### 12.11 Hallazgos para el informe
+### 12.11 Frontend publicado (2026-09-24)
+
+- Publicado en Cloudflare Pages (**https://vacunas.pages.dev**), conectado a GitHub; funciona de punta a punta con la API de Render: plan del paciente y compra.
+- Problemas del primer deploy, todos resueltos:
+  1. Página en blanco (`Cannot read properties of undefined (reading 'replace')`): el `.gitignore` excluía `.env.*`, y con eso `frontend/.env.production` (que solo tiene la dirección pública de la API) nunca llegó a GitHub. Se agregaron excepciones al `.gitignore`.
+  2. `/rtu/info` respondía 404: el zip de ajustes se extrajo dentro de `frontend/` y el `git add .` se hizo desde esa carpeta, así que los cambios del backend no se subieron. Se movieron los archivos a su lugar y se hizo el commit desde la raíz.
+  3. El asistente de Cloudflare ofrecía por defecto un *Worker* que crea un repositorio nuevo; se usó el flujo de *Pages* con el repo existente.
+- `FRONTEND_ORIGINS=https://vacunas.pages.dev` configurado en Render; el servicio reinició y volvió a entrenar solo.
+- Mejora T6.8 verificada con un servidor simulado que responde `/health` pero no `/rtu/info`: la página muestra que el servidor tiene una versión anterior y sugiere revisar el deploy de Render.
+
+### 12.12 Hallazgos para el informe
 
 1. **Maldición de la dimensionalidad:** la red completa rinde peor que no usar covariables; la factorizada es la mejor prediciendo visitas.
 2. **Sesgo de selección:** sin estratificar por línea, FarmacoC queda subestimado y el ranking se degrada.
@@ -680,7 +691,7 @@ Respuesta:
 
 `metodo` solo admite `red_factorizada` (el Camino A está desactivado, ADR-16). Si hay pocos ciclos parecidos con un fármaco, o si la actividad observada en los casos similares difiere más de 0.15 de la estimada por el modelo, se agrega una advertencia.
 
-### Fase 6: frontend [PENDIENTE]
+### Fase 6: frontend [HECHO]
 
 | Id | Tarea | Criterio de aceptación |
 |---|---|---|
@@ -693,7 +704,8 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 | T6.2 | Resultado: fármacos en orden, probabilidad de estabilizarse, banda de desenlaces (estable, cambio, abandono), inyecciones y años esperados, valor de la secuencia, avisos y supuestos | Legible en escritorio y celular (capturas a 1280 y 390 px) | [HECHO] |
 | T6.3 | Explicación: tratamientos con cada fármaco entre los 100 ojos más parecidos, actividad observada frente a estimada, y los casos más parecidos con su evolución | En la misma pantalla del resultado | [HECHO] |
 | T6.4 | Traducir los errores de la API: 422 de Pydantic (`detail` es una lista), errores del Excel (`mensaje` y `errores`), falta de conexión y tiempo de espera agotado | Mensajes legibles, sin romperse | [HECHO] (sin tests automáticos del frontend) |
-| T6.5 | Deploy en Cloudflare Pages, probar CORS desde ese dominio y restringir con `FRONTEND_ORIGINS` | La página publicada calcula un plan y una compra | [PENDIENTE] |
+| T6.5 | Deploy en Cloudflare Pages, probar CORS desde ese dominio y restringir con `FRONTEND_ORIGINS` | La página publicada calcula un plan y una compra | [HECHO] publicado y funcionando; `FRONTEND_ORIGINS` configurado. [PENDIENTE] registrar la verificación de encabezados (sección 16.5) |
+| T6.8 | Si falta la configuración de la API, usar la dirección de Render y avisar en la consola; si el servidor responde 404 (versión vieja sin el endpoint), explicarlo en lugar de quedarse en "Conectando" | Probado con un servidor simulado sin `/rtu/info` | [HECHO] |
 | T6.6 | Pantalla de compra: período, probabilidad de que alcance y ojos nuevos por semana; tabla con compra, uso esperado, rango, origen de la demanda y uso histórico; cómo se calculó con los backtests | Coincide con `/rtu/estimacion-compra` | [HECHO] |
 | T6.7 | Estado del servidor: al abrir consulta `/health` (despierta Render y dispara el precalentamiento) hasta que el modelo está listo | Muestra «Listo» sin intervención | [HECHO] |
 
@@ -717,7 +729,7 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 
 ### Fase 9: informe y presentación [PENDIENTE]
 
-Escribir los hallazgos de la sección 12.11, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
+Escribir los hallazgos de la sección 12.12, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
 
 ### Trabajo futuro (fuera de alcance)
 
@@ -748,6 +760,9 @@ Escribir los hallazgos de la sección 12.11, las limitaciones (sección 14) y el
 - Los dos ojos de un paciente se modelan con un efecto compartido, pero la recomendación trata cada ojo por separado.
 
 ### 14.3 Riesgos operativos
+
+- **Extraer entregas y hacer commits desde la raíz del repo.** Si se está parado en una subcarpeta, `Expand-Archive -DestinationPath .` deja los archivos en el lugar equivocado y `git add .` solo sube esa subcarpeta. Usar siempre la ruta completa (`-DestinationPath C:\Users\guill\Desktop\vacunas`) y `git add -A` desde la raíz, y revisar `git status` antes del commit.
+- **Configuración pública del frontend en el repo.** `frontend/.env.production` y `frontend/.env.development` no tienen secretos y deben estar en GitHub (el `.gitignore` tiene excepciones para ellos). Los secretos (`ADMIN_API_KEY`, credenciales de R2) van solo en las variables de entorno de Render.
 
 - Arranque en frío del plan gratuito de Render.
 - Recursos del plan de Render con pgmpy y sus dependencias (RNF-06, Q-05).
@@ -852,7 +867,16 @@ npx wrangler login
 npx wrangler pages deploy dist --project-name rtu-frontend
 ```
 
-**Después del primer deploy (T6.5):** abrir el dominio de Pages, calcular un plan y una compra. Si funciona, en Render → Environment, definir `FRONTEND_ORIGINS` con ese dominio (por ejemplo `https://rtu-frontend.pages.dev`) para que solo esa página pueda llamar a la API desde un navegador.
+**Configuración actual:** proyecto `vacunas` en Pages (https://vacunas.pages.dev) y, en Render → servicio → **Environment** → Environment Variables, `FRONTEND_ORIGINS=https://vacunas.pages.dev`. Ojo: en Render, "Environment Variables" es distinto de "Add a new environment" (eso crea un grupo de servicios).
+
+**Verificar la restricción de CORS:**
+
+```powershell
+$propio = Invoke-WebRequest https://vacunas-mwyr.onrender.com/health -Headers @{Origin="https://vacunas.pages.dev"} -UseBasicParsing
+$ajeno  = Invoke-WebRequest https://vacunas-mwyr.onrender.com/health -Headers @{Origin="https://otro-sitio.com"} -UseBasicParsing
+"Propio: " + $propio.Headers["Access-Control-Allow-Origin"]   # debe ser https://vacunas.pages.dev
+"Ajeno:  " + $ajeno.Headers["Access-Control-Allow-Origin"]    # debe estar vacío
+```
 
 ### 16.6 Deploy del backend
 
@@ -890,3 +914,4 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-24 | Desplegado en Render: modelo entrenado en menos de 7 s (antes 88.8 s), compra precalculada a los ~79 s, 0.72 s por recomendación; compra idéntica a la local. Fase 5 cerrada salvo la memoria. |
 | 2026-09-24 | Fase 6 en local: frontend React en `frontend/` (plan del paciente con explicación, compra, estado del servidor); `/rtu/info`; 40 tests. Verificado con capturas en escritorio y celular. Pendiente: deploy en Cloudflare Pages y CORS (T6.5). |
 | 2026-09-24 | Frontend probado localmente en Windows. Ajustes: mensaje de error de conexión más preciso, ícono de la página, aviso de sintaxis de los tests eliminado. |
+| 2026-09-24 | Fase 6 publicada: frontend en https://vacunas.pages.dev (Cloudflare Pages conectado a GitHub), `/rtu/info` en Render, `FRONTEND_ORIGINS` configurado. Problemas del primer deploy registrados en 12.11 y 14.3. Mejora T6.8 (dirección por defecto y aviso ante 404). |
