@@ -24,7 +24,7 @@
 1. Pasarle este README al inicio de cada sesión.
 2. Ningún plazo, fecha de entrega o compromiso existe salvo que figure en la sección 15. (Antecedente: en una sesión anterior un asistente inventó una "demo de mañana" que no existía.)
 3. Ninguna cifra de resultados se reporta si no está en la sección 12 o no se obtuvo corriendo el código.
-4. Al terminar una sesión, actualizar la sección 16 (registro de cambios) y el estado de las tareas de la sección 13.
+4. Al terminar una sesión, actualizar la sección 17 (registro de cambios) y el estado de las tareas de la sección 13.
 5. Distinguir siempre entre el servicio y repo actual (`vacunas`) y el anterior (`api-vacunas`). Ver sección 5.4.
 
 ---
@@ -113,7 +113,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-11 | Endpoint de API que devuelva la recomendación para un caso (`POST /rtu/sugerir-plan`). | [HECHO] en local; deploy pendiente (T5.9) |
 | RF-12 | Endpoint protegido para cargar el histórico RTU en R2 y reentrenar (`POST /admin/rtu/actualizar-historico`). | [HECHO] en local; deploy pendiente (T5.9) |
 | RF-13 | Validar el esquema del Excel RTU al subirlo y rechazar con mensaje claro si no cumple. | [HECHO] |
-| RF-14 | Formulario y vista de resultado en el frontend para el caso RTU. | [PENDIENTE] Fase 6 |
+| RF-14 | Frontend: formulario del paciente, recomendación con explicación y pantalla de compra. | [HECHO] en local; deploy [PENDIENTE] (T6.5) |
 | RF-15 | Excluir fármacos ya probados y calcular la línea a partir de ellos. | [HECHO] |
 | RF-16 | Reporte PDF del resultado RTU. | [PENDIENTE] Opcional |
 | RF-17 | Personalizar `p_activo` con la historia observada del propio ojo. | [PENDIENTE] Fase 8, opcional |
@@ -130,8 +130,8 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RNF-01 | Reproducibilidad | Mismas entradas y semillas → mismos resultados en cualquier máquina. | [HECHO] Verificado Linux vs Windows, fases 1 a 4. |
 | RNF-02 | Auditabilidad | Cada probabilidad del grafo es un cociente de conteos reproducible a mano; la compra informa su calibración y los backtests usados. | [HECHO] |
 | RNF-03 | Configurabilidad del protocolo | Cambiar un supuesto clínico = cambiar un valor en `supuestos_protocolo.py`. | [HECHO] |
-| RNF-04 | Latencia de `/rtu/sugerir-plan` con el modelo entrenado | < 2 s | [HECHO] Render: 0.71 s medido desde Montevideo (incluye red). |
-| RNF-05 | Arranque en frío en Render | El entrenamiento no debe recaer en la consulta del médico. | Medido: 88.8 s en la primera consulta (entrenando desde Excel). Mitigado con lectura CSV (T5.13) y precalentamiento disparado por `/health` (T5.14); [PENDIENTE] volver a medir tras el deploy. Antes de usar el sistema, llamar a `/health` y esperar `rtu_modelo_entrenado: true`. |
+| RNF-04 | Latencia de `/rtu/sugerir-plan` con el modelo entrenado | < 2 s | [HECHO] Render: 0.71-0.72 s medido desde Montevideo (incluye red). `/rtu/estimacion-compra` con caché: instantáneo. |
+| RNF-05 | Arranque en frío en Render | El entrenamiento no debe recaer en la consulta del médico. | [HECHO] Antes: 88.8 s en la primera consulta (entrenando desde Excel, con pgmpy). Ahora (CSV + grafo con fórmulas + precalentamiento por `/health`): modelo entrenado en menos de 7 s tras la carga; compra por defecto precalculada a los ~79 s, en segundo plano. Antes de usar el sistema, llamar a `/health` y esperar `rtu_modelo_entrenado: true`. |
 | RNF-06 | Memoria | La imagen debe entrar en los recursos del plan de Render. El sistema RTU ya no carga pgmpy (solo lo usa el legacy). | [A CONFIRMAR] qué recurso son los 10 GB informados (ver Q-05) y consumo real de RAM |
 | RNF-07 | Seguridad | Endpoints de administración con `X-API-Key`; secretos solo en variables de entorno; el Excel nunca queda público. | [HECHO] en legacy; replicar en RTU |
 | RNF-08 | Privacidad | Sin datos de pacientes reales en el repo ni en R2 hasta tener autorización formal. | Vigente |
@@ -147,7 +147,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 
 ```mermaid
 flowchart LR
-    U[Médico / navegador] -.->|Fase 6| FE[Frontend React<br/>Cloudflare Pages<br/>a construir]
+    U[Médico / navegador] -.->|Fase 6| FE[Frontend React<br/>frontend/ → Cloudflare Pages]
     FE -.->|HTTPS JSON| API[API FastAPI<br/>Render, Docker]
     API --> R2[(Cloudflare R2<br/>Excel histórico)]
     API --> LEG[Módulos legacy<br/>vacunas]
@@ -414,7 +414,7 @@ Columnas mínimas que exige `motor_probabilidades.correr_pipeline`: `paciente_id
 | `compras_rtu.py` | Estimación de compra: uso histórico, esperanza y varianza exactas, calibración, backtest (RF-21, RF-22) | estimación, supuestos | [HECHO] |
 | `tests/referencia_pgmpy.py` | Versión del grafo con pgmpy, **solo** para verificar en los tests que las fórmulas dan lo mismo | pgmpy | [HECHO] |
 | `servicio_rtu.py` | Modelo en memoria con invalidación por ETag; arma la respuesta (T5.4, T5.5) | todos los anteriores, R2 | [HECHO] |
-| `tests/` , `pytest.ini`, `requirements-dev.txt` | 39 tests automáticos | — | [HECHO] |
+| `tests/` , `pytest.ini`, `requirements-dev.txt` | 40 tests automáticos | — | [HECHO] |
 
 Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu`, `esquema_rtu`, `explicacion_rtu`, `servicio_rtu` y `compras_rtu`. Quedan afuera las herramientas offline (`generar_datos_rtu`, `evaluar_rtu`, `fase4_rtu`, `tests/`).
 
@@ -450,6 +450,7 @@ Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu
 | POST | `/admin/rtu/actualizar-historico` | Valida el Excel RTU y, si es válido, sube a R2 el original y una copia CSV, y reentrena en segundo plano (`X-API-Key`) |
 | POST | `/rtu/estimacion-compra` | Body `{"horizonte_semanas": 52, "nivel_servicio": 0.95, "nuevos_ojos_por_semana": 0}` (todos opcionales). Devuelve por fármaco: compra sugerida, demanda esperada, desvío, intervalo 95%, aporte de ojos en tratamiento y de nuevos, y el cálculo sin calibrar; además el uso histórico y la calibración con sus backtests. La combinación por defecto se precalcula; otras se calculan al momento |
 | GET | `/health` | Suma `rtu_historico_cargado`, `rtu_modelo_entrenado`, `rtu_entrenando`, `rtu_compra_precalculada`, `rtu_version_modelo` y `rtu_ultimo_error` |
+| GET | `/rtu/info` | Para la interfaz: `listo`, lista de `farmacos`, tamaño del `historico`, `supuestos`, `datos_simulados`. Responde en el acto; si el modelo no está listo devuelve `listo: false` y dispara el precalentamiento |
 
 Códigos de error RTU: 422 entrada inválida (Pydantic o incoherencia clínica: `tipo_mnv` fuera de DMRE, EMD con `diabetes: 0`); 400 fármaco desconocido, todos ya probados o Excel inválido al subir (con la lista de errores); 401 sin API key; 503 si no hay histórico RTU cargado.
 
@@ -476,6 +477,7 @@ Pruebas legacy contra el deploy (2026-09-22): validación con Pydantic (edad 0 a
 | ADR-13 | Objetivo por defecto: maximizar P(estable) | El médico quiere saber qué fármaco tiene más chances de funcionar; las inyecciones se muestran como dato secundario | Minimizar inyecciones por defecto |
 | ADR-15 | No entrenar al arrancar el servicio; el precalentamiento lo dispara `/health` | Un primer intento entrenaba al arrancar, en otro hilo: en el plan gratuito de Render el servidor no llegó a abrir el puerto a tiempo ("port scan timeout") y el deploy falló. Con el servidor ya escuchando no hay problema | Entrenar en el evento de arranque |
 | ADR-16 | **Todo probabilidad clásica: se sigue con el grafo y se desactiva el Camino A.** El grafo se calcula con fórmulas sobre conteos de pandas, sin pgmpy | Pedido explícito: nada de *machine learning* ni IA. Las fórmulas dan exactamente lo mismo que pgmpy, se pueden seguir a mano y entrenan 40 veces más rápido. El Camino A queda comentado con `#` | Mantener los dos caminos; seguir con pgmpy |
+| ADR-18 | Frontend en la carpeta `frontend/` de este repo, con Vite + React + TypeScript, sin librerías de componentes | Una sola fuente de verdad (este README); Render no se ve afectado porque su `Dockerfile` copia archivos puntuales; pocas dependencias | Repo aparte; librería de componentes |
 | ADR-17 | Estimación de compra con esperanza y varianza exactas (programación dinámica) + calibración con backtests del propio histórico | Exacto y auditable; la calibración corrige el sesgo por heterogeneidad entre ojos (desigualdad de Jensen) que el backtest mostró | Simulación Monte Carlo; usar el modelo sin calibrar; programación lineal (queda como trabajo futuro para optimizar costos) |
 | ADR-14 | Explicación por casos similares ordenados por una fórmula de distancia (determinística, sin aprendizaje) | Auditable y reproducible (P1); le muestra al médico casos concretos, no solo un número. Aplica igual si la estimación viene del Camino B, que no tiene "casos" propios | Explicación generada por un LLM |
 
@@ -579,7 +581,25 @@ Parado en la semana 104, pronóstico de las 52 semanas siguientes con datos hast
 - Calibración con ventanas que arrancan en las semanas 13, 26, 39 y 52: factor 0.98, inflación 4.6. La inflación es alta porque el sesgo cambia con la etapa de la cohorte (en el simulador todos los pacientes empiezan el mismo día; en la ventana de la semana 13 el modelo sobreestima 14%, en las siguientes subestima). Con esa calibración la compra al 95% alcanzó para los tres fármacos, con 7 a 10% de margen.
 - Pronóstico desde el final del histórico (semana 208, 859 ojos en tratamiento, 52 semanas, 95%): factor 1.04, inflación 1.37 (cohorte madura, más estable). Compra sugerida: FarmacoA 2.141, FarmacoB 1.131, FarmacoC 523, sin pacientes nuevos. Cada ojo nuevo que ingresa suma en promedio 5.4 dosis de A, 2.3 de B y 1.0 de C en ese horizonte.
 
-### 12.9 Hallazgos para el informe
+### 12.9 Render tras ADR-16 y RF-21 (2026-09-24)
+
+- Deploy exitoso. Carga del histórico: 1.500 pacientes, 34.268 visitas; se crea la copia CSV.
+- Tras la carga: modelo entrenado antes de los 7 s (antes: 88.8 s); compra por defecto precalculada a los ~79 s, en segundo plano, sin errores.
+- `/rtu/sugerir-plan`: 0.72 s desde Montevideo.
+- `/rtu/estimacion-compra` (52 semanas, 95%): FarmacoA 2.141, FarmacoB 1.131, FarmacoC 523. **Idéntico** a lo calculado en local (12.8): el cálculo es reproducible entre entornos.
+- [PENDIENTE] consumo de memoria (Q-05).
+
+### 12.10 Frontend (2026-09-24, local)
+
+- `npm run build` sin errores de TypeScript: 165 kB de JavaScript (53 kB comprimido) y 9.6 kB de CSS.
+- Probado de punta a punta con la API local y un navegador sin interfaz (Chromium), con capturas a 1280 px y 390 px: estado del servidor hasta «Listo», formulario, recomendación con bandas de desenlaces, base del cálculo y casos parecidos, y compra por defecto.
+- Defectos encontrados en las capturas y corregidos: tablas que no usaban el ancho disponible y cortaban la última columna; nombres de fármaco partidos en dos líneas; control de antecedentes cortado con textos largos; barras de uso histórico llenas (el ancho se pasaba con coma decimal); títulos de tabla que se cortaban en celular.
+- La fuente Atkinson Hyperlegible no se pudo cargar en el entorno de las capturas (sin internet); en un navegador real carga bien.
+- Backend: `/rtu/info` agregado; 40 tests pasan.
+- Probado por el usuario en Windows (API local + `npm run dev`): `/health`, `/rtu/info`, plan y compra responden 200. La tipografía carga bien en un navegador real.
+- Ajustes posteriores: el error de conexión indica a qué dirección intentó conectarse (antes sugería revisar internet aunque la causa fuera la API apagada); ícono de la página (evita el 404 de `favicon.ico`); dibujo del grafo en `estimacion_rtu.py` sin barras invertidas, que generaban el aviso `invalid escape sequence` en los tests.
+
+### 12.11 Hallazgos para el informe
 
 1. **Maldición de la dimensionalidad:** la red completa rinde peor que no usar covariables; la factorizada es la mejor prediciendo visitas.
 2. **Sesgo de selección:** sin estratificar por línea, FarmacoC queda subestimado y el ranking se degrada.
@@ -597,7 +617,7 @@ Orden recomendado: 5 → 6 → 7 → 8 (opcional) → 9. Ninguna fase tiene fech
 
 ### Fase 5: integración a la API [HECHO]
 
-Estado: T5.1 a T5.12 **[HECHO]**. Desplegada en Render el 2026-09-23. Queda una sola verificación: volver a medir el arranque tras el deploy de las mejoras de T5.13 y T5.14, y anotar la memoria (Q-05).
+Estado: T5.1 a T5.15 **[HECHO]**, desplegadas y medidas en Render (sección 12.9). Solo queda anotar el consumo de memoria (Q-05).
 
 **Objetivo:** que la recomendación RTU se pueda pedir por HTTP desde el deploy de Render.
 
@@ -664,16 +684,20 @@ Respuesta:
 
 | Id | Tarea | Criterio de aceptación |
 |---|---|---|
-**No hay frontend previo: se construye desde cero.**
+Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **Paciente** y **Compras**.
 
-| Id | Tarea | Criterio de aceptación |
-|---|---|---|
-| T6.0 | Crear el proyecto React (repo nuevo o carpeta en este, [A DECIDIR]) y el proyecto de Cloudflare Pages | Build y deploy de una página mínima |
-| T6.1 | Formulario RTU con los campos del contrato | Valida antes de enviar |
-| T6.2 | Vista de resultado: fármacos recomendados, P(estable) e inyecciones por fármaco, supuestos y aviso de que decide el médico | Legible en escritorio y celular |
-| T6.3 | Vista de explicación: casos similares en los que se basó el cálculo y cómo evolucionaron (RF-19) | El médico puede ver los casos sin salir de la pantalla del resultado |
-| T6.4 | Manejar el 422 de Pydantic (`detail` es un array de objetos, no un string) | Muestra el error sin romperse |
-| T6.5 | Probar CORS real desde el dominio de Pages; restringir con `FRONTEND_ORIGINS` | Llamada exitosa desde el navegador |
+| Id | Tarea | Criterio de aceptación | Estado |
+|---|---|---|---|
+| T6.0 | Proyecto React en `frontend/` | `npm run build` sin errores | [HECHO] |
+| T6.1 | Formulario del paciente: diagnóstico, tipo de MNV (solo DMRE), edad, antecedentes con opción «Sin dato», fármacos ya recibidos, prioridad | Edad entre 18 y 110; con EMD fija diabetes = Sí; si se probaron todos los fármacos, no deja enviar | [HECHO] |
+| T6.2 | Resultado: fármacos en orden, probabilidad de estabilizarse, banda de desenlaces (estable, cambio, abandono), inyecciones y años esperados, valor de la secuencia, avisos y supuestos | Legible en escritorio y celular (capturas a 1280 y 390 px) | [HECHO] |
+| T6.3 | Explicación: tratamientos con cada fármaco entre los 100 ojos más parecidos, actividad observada frente a estimada, y los casos más parecidos con su evolución | En la misma pantalla del resultado | [HECHO] |
+| T6.4 | Traducir los errores de la API: 422 de Pydantic (`detail` es una lista), errores del Excel (`mensaje` y `errores`), falta de conexión y tiempo de espera agotado | Mensajes legibles, sin romperse | [HECHO] (sin tests automáticos del frontend) |
+| T6.5 | Deploy en Cloudflare Pages, probar CORS desde ese dominio y restringir con `FRONTEND_ORIGINS` | La página publicada calcula un plan y una compra | [PENDIENTE] |
+| T6.6 | Pantalla de compra: período, probabilidad de que alcance y ojos nuevos por semana; tabla con compra, uso esperado, rango, origen de la demanda y uso histórico; cómo se calculó con los backtests | Coincide con `/rtu/estimacion-compra` | [HECHO] |
+| T6.7 | Estado del servidor: al abrir consulta `/health` (despierta Render y dispara el precalentamiento) hasta que el modelo está listo | Muestra «Listo» sin intervención | [HECHO] |
+
+**Diseño:** fondo gris azulado como la pantalla de un equipo de OCT; un azul para las acciones; tres colores fijos para los desenlaces (verde azulado = estable, ámbar = cambio de fármaco, gris = abandono). Tipografía *Atkinson Hyperlegible*, creada para personas con baja visión. El elemento central es la **banda de desenlaces**: una barra dividida en tres tramos que suman 100%, como las capas de un corte de OCT. Tokens en `frontend/src/estilos.css`.
 
 ### Fase 7: limpieza y deuda técnica [PENDIENTE]
 
@@ -693,7 +717,7 @@ Respuesta:
 
 ### Fase 9: informe y presentación [PENDIENTE]
 
-Escribir los hallazgos de la sección 12.9, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
+Escribir los hallazgos de la sección 12.11, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
 
 ### Trabajo futuro (fuera de alcance)
 
@@ -748,7 +772,7 @@ Escribir los hallazgos de la sección 12.9, las limitaciones (sección 14) y el 
 | Q-09 | Unidad de compra: ¿1 dosis = 1 inyección = 1 vial? ¿Hay mínimos de compra, vencimientos o presentaciones de varios viales? | [A CONFIRMAR] hoy se supone 1 = 1 = 1 |
 | Q-10 | Tasa de pacientes nuevos por semana | [A CONFIRMAR] el histórico simulado no tiene fechas reales; hoy es un dato de entrada (default 0) |
 | Q-06 | Contacto clínico para validar supuestos | Diferido hasta tener el sistema listo |
-| Q-07 | ¿El frontend va en un repo aparte o en una carpeta de este? | [A DECIDIR] (T6.0) |
+| Q-07 | ¿El frontend va en un repo aparte o en una carpeta de este? | **Resuelta:** carpeta `frontend/` de este repo (ADR-18). |
 | Q-08 | Métrica de distancia para los casos similares | Implementada una [PROPUESTA] en `explicacion_rtu.PESOS_DISTANCIA`: subtipo (0 / 1 / 3), edad por década (1) y 0.5 por comorbilidad distinta. Revisar con un clínico. |
 
 **Plazos comprometidos:** ninguno.
@@ -792,7 +816,7 @@ uvicorn api:app --reload
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest -q                                   # 39 tests
+python -m pytest -q                                   # 40 tests
 python compras_rtu.py                                 # backtest y estimación de compra
 $env:RTU_HISTORICO_LOCAL = "historico_rtu_SIMULADO.xlsx"
 uvicorn api:app --reload                              # abrir http://127.0.0.1:8000/docs
@@ -800,7 +824,37 @@ uvicorn api:app --reload                              # abrir http://127.0.0.1:8
 
 En `/docs` FastAPI muestra un formulario para probar `/rtu/sugerir-plan`. Para volver a usar R2 en local: `Remove-Item Env:RTU_HISTORICO_LOCAL`.
 
-### 16.5 Deploy
+### 16.5 Frontend
+
+Requiere Node.js 18 o posterior.
+
+```powershell
+cd frontend
+npm install
+npm run dev              # http://localhost:5173, usa la API local (frontend/.env.development)
+npm run build            # compila a frontend/dist con la API de Render (frontend/.env.production)
+```
+
+Para probar en local, levantar antes la API (sección 16.4).
+
+**Deploy en Cloudflare Pages, con conexión a GitHub (recomendado; se actualiza solo en cada push):**
+
+1. Cloudflare → **Workers & Pages** → **Create** → **Pages** → **Connect to Git** → elegir `GuillermoRivero98/vacunas`.
+2. Configuración de build: *Framework preset* **Vite** (o ninguno); *Build command* `npm run build`; *Build output directory* `dist`; *Root directory* `frontend`.
+3. **Save and Deploy**. Cloudflare asigna un dominio `https://<nombre>.pages.dev`.
+
+**Alternativa sin conexión a GitHub (con `wrangler`):**
+
+```powershell
+cd frontend
+npm run build
+npx wrangler login
+npx wrangler pages deploy dist --project-name rtu-frontend
+```
+
+**Después del primer deploy (T6.5):** abrir el dominio de Pages, calcular un plan y una compra. Si funciona, en Render → Environment, definir `FRONTEND_ORIGINS` con ese dominio (por ejemplo `https://rtu-frontend.pages.dev`) para que solo esa página pueda llamar a la API desde un navegador.
+
+### 16.6 Deploy del backend
 
 Push a `main` de `GuillermoRivero98/vacunas` → Render clona → `docker build` → deploy. No hace falta ningún paso manual.
 
@@ -833,3 +887,6 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-23 | Fase 5 desplegada en Render: histórico RTU en R2, 0.71 s por consulta, 88.8 s la primera. Mejoras T5.13 (copia CSV) y T5.14 (precalentamiento) y T5.15 (un ojo por paciente); `.gitignore` agregado. |
 | 2026-09-23 | Deploy de T5.14 falló por "port scan timeout" (entrenar al arrancar). Corregido: el precalentamiento lo dispara `/health` (ADR-15). 29 tests. |
 | 2026-09-24 | ADR-16: todo probabilidad clásica; se sigue con el grafo (reimplementado con fórmulas en pandas, sin pgmpy) y el Camino A queda comentado con `#`. RF-21/22 y ADR-17: estimación de compra con esperanza y varianza exactas y calibración por backtest; endpoint `/rtu/estimacion-compra`. 39 tests. |
+| 2026-09-24 | Desplegado en Render: modelo entrenado en menos de 7 s (antes 88.8 s), compra precalculada a los ~79 s, 0.72 s por recomendación; compra idéntica a la local. Fase 5 cerrada salvo la memoria. |
+| 2026-09-24 | Fase 6 en local: frontend React en `frontend/` (plan del paciente con explicación, compra, estado del servidor); `/rtu/info`; 40 tests. Verificado con capturas en escritorio y celular. Pendiente: deploy en Cloudflare Pages y CORS (T6.5). |
+| 2026-09-24 | Frontend probado localmente en Windows. Ajustes: mensaje de error de conexión más preciso, ícono de la página, aviso de sintaxis de los tests eliminado. |

@@ -215,16 +215,16 @@ class EstimadorFrecuencias:
 # ---------------------------------------------------------------------------
 
 class EstimadorRedBayesiana:
-    """Grafo probabilístico (red bayesiana) calculado con FÓRMULAS CLÁSICAS
+    r"""Grafo probabilístico (red bayesiana) calculado con FÓRMULAS CLÁSICAS
     de probabilidad sobre tablas de conteo de pandas. Sin librerías de
     aprendizaje automático: cada número se puede reproducir a mano.
 
     Estructura "factorizada" (la usada por defecto, ADR-03):
 
-        Farmaco --\
-        Tiempo  ----> Activo ----> Subtipo  (también depende de Farmaco)
-        Linea   --/          \---> Edad
-                              \--> Carga_comorbida
+        Farmaco ─┐
+        Tiempo  ─┼──> Activo ──┬──> Subtipo  (también depende de Farmaco)
+        Linea   ─┘             ├──> Edad
+                               └──> Carga_comorbida
 
     Tablas de probabilidad condicional (todas con suavizado de Laplace:
     se suma 1 a cada celda, igual que un prior Dirichlet uniforme):

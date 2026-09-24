@@ -389,3 +389,14 @@ def test_pacientes_nuevos_suman_demanda(cliente):
                                     {"nuevos_ojos_por_semana": -1}])
 def test_estimacion_compra_422(cliente, cuerpo):
     assert cliente.post("/rtu/estimacion-compra", json=cuerpo).status_code == 422
+
+
+def test_info(cliente):
+    import time
+    for _ in range(240):
+        j = cliente.get("/rtu/info").json()
+        if j["listo"]:
+            break
+        time.sleep(0.5)
+    assert j["listo"] and sorted(j["farmacos"]) == sorted(gen.FARMACOS)
+    assert j["historico"]["pacientes"] == N_PACIENTES_TEST

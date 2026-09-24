@@ -229,6 +229,21 @@ class ServicioRTU:
 
 
 
+    def info(self) -> dict:
+        """Datos básicos para armar la interfaz (lista de fármacos, tamaño
+        del histórico, supuestos). No entrena: si el modelo no está listo,
+        lo informa y dispara el precalentamiento."""
+        m = self._modelo
+        if m is None:
+            self.precalentar_en_segundo_plano()
+            return {"listo": False, "farmacos": [], **self.estado()}
+        return {"listo": True, "farmacos": m.farmacos,
+                "historico": {"pacientes": m.n_pacientes, "ojos": m.n_ojos, "visitas": m.n_visitas},
+                "supuestos": dataclasses.asdict(SUPUESTOS_DEFAULT),
+                "datos_simulados": self._datos_simulados,
+                "compra_por_defecto": COMPRA_POR_DEFECTO,
+                **self.estado()}
+
     # ------------------------------------------------------------------
     # Estimación de compra (RF-21)
     # ------------------------------------------------------------------

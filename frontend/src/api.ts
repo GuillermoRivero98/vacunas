@@ -54,7 +54,7 @@ async function pedir<T>(ruta: string, opciones: RequestInit = {}, timeoutMs = 90
     throw new ErrorApi(0, [
       expiro
         ? "El servidor tardó demasiado en responder. Si estaba dormido, esperá un minuto y probá de nuevo."
-        : "No se pudo conectar con el servidor. Revisá la conexión a internet.",
+        : `No se pudo conectar con la API en ${BASE}. Verificá que esté en funcionamiento y que haya conexión.`,
     ]);
   } finally {
     clearTimeout(reloj);

@@ -11,6 +11,7 @@ RTU (inyecciones intravítreas, ver README):
   POST /rtu/sugerir-plan                -> recomendación + casos similares
   POST /admin/rtu/actualizar-historico  -> sube, valida y activa el histórico RTU
   POST /rtu/estimacion-compra           -> demanda y compra sugerida por fármaco
+  GET  /rtu/info                        -> fármacos, tamaño del histórico, supuestos (para la interfaz)
 
 El Excel histórico vive en Cloudflare R2 (ver almacenamiento_r2.py) --
 Render (plan gratis/starter) no garantiza disco persistente entre
@@ -284,3 +285,10 @@ def rtu_estimacion_compra(parametros: ParametrosCompra):
         raise HTTPException(503, str(e))
     except EsquemaInvalido as e:
         raise HTTPException(500, {"mensaje": "El histórico RTU cargado no es válido.", "errores": e.errores})
+
+
+@app.get("/rtu/info")
+def rtu_info():
+    """Para la interfaz: lista de fármacos, tamaño del histórico y supuestos.
+    Responde en el acto; si el modelo no está listo devuelve listo=false."""
+    return servicio_rtu.info()
