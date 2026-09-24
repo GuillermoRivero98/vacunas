@@ -607,7 +607,7 @@ Parado en la semana 104, pronóstico de las 52 semanas siguientes con datos hast
 - Dependencias de Python instaladas: 391 MB, contra 663 MB con pgmpy y matplotlib. La imagen además deja de instalar LibreOffice y wkhtmltopdf.
 - `fase4_rtu.py --replicas 10`: 14 s en lugar de 81 s, con indicador de avance; los resultados tienen más ruido (techo 23.97 contra 23.26 con 60 réplicas), así que los números del informe siguen saliendo con 60.
 - 41 tests pasan (nuevo: la API no expone rutas legacy).
-- [PENDIENTE] medir el tiempo de build y el arranque en Render con la imagen nueva.
+- Desplegado en Render (commit `72a719a`): la imagen nueva construye y arranca bien; `/health` ya no informa `excel_cargado` y el primer `/health` dispara el entrenamiento como antes. [PENDIENTE] anotar el tiempo de build para compararlo con los anteriores.
 
 ### 12.13 Hallazgos para el informe
 
@@ -710,7 +710,7 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 
 **Diseño:** fondo gris azulado como la pantalla de un equipo de OCT; un azul para las acciones; tres colores fijos para los desenlaces (verde azulado = estable, ámbar = cambio de fármaco, gris = abandono). Tipografía *Atkinson Hyperlegible*, creada para personas con baja visión. El elemento central es la **banda de desenlaces**: una barra dividida en tres tramos que suman 100%, como las capas de un corte de OCT. Tokens en `frontend/src/estilos.css`.
 
-### Fase 7: limpieza y deuda técnica [HECHO en local; T7.6 la hace el usuario]
+### Fase 7: limpieza y deuda técnica [HECHO; T7.6 la hace el usuario]
 
 | Id | Tarea | Estado |
 |---|---|---|
@@ -909,3 +909,4 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-24 | Fase 6 publicada: frontend en https://vacunas.pages.dev (Cloudflare Pages conectado a GitHub), `/rtu/info` en Render, `FRONTEND_ORIGINS` configurado. Problemas del primer deploy registrados en 12.11 y 14.3. Mejora T6.8 (dirección por defecto y aviso ante 404). |
 | 2026-09-24 | CORS verificado en producción (commit `66da1ef`). **Fase 6 cerrada.** |
 | 2026-09-24 | Fase 7: sistema legacy de vacunas retirado a `archivo/legacy/` (ADR-19); imagen sin LibreOffice, wkhtmltopdf, pgmpy ni matplotlib; `fase4_rtu.py --replicas`; 41 tests. Pendiente: T7.6 (archivar `api-vacunas`) y medir el build en Render. |
+| 2026-09-24 | Fase 7 desplegada en Render (commit `72a719a`): el servicio solo expone RTU. |
