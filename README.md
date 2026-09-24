@@ -132,11 +132,11 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RNF-03 | Configurabilidad del protocolo | Cambiar un supuesto clínico = cambiar un valor en `supuestos_protocolo.py`. | [HECHO] |
 | RNF-04 | Latencia de `/rtu/sugerir-plan` con el modelo entrenado | < 2 s | [HECHO] Render: 0.71-0.72 s medido desde Montevideo (incluye red). `/rtu/estimacion-compra` con caché: instantáneo. |
 | RNF-05 | Arranque en frío en Render | El entrenamiento no debe recaer en la consulta del médico. | [HECHO] Antes: 88.8 s en la primera consulta (entrenando desde Excel, con pgmpy). Ahora (CSV + grafo con fórmulas + precalentamiento por `/health`): modelo entrenado en menos de 7 s tras la carga; compra por defecto precalculada a los ~79 s, en segundo plano. Antes de usar el sistema, llamar a `/health` y esperar `rtu_modelo_entrenado: true`. |
-| RNF-06 | Memoria | La imagen debe entrar en los recursos del plan de Render. El sistema RTU ya no carga pgmpy (solo lo usa el legacy). | [A CONFIRMAR] qué recurso son los 10 GB informados (ver Q-05) y consumo real de RAM |
+| RNF-06 | Memoria | La imagen debe entrar en los recursos del plan de Render. Desde ADR-19 la imagen no tiene pgmpy, matplotlib, LibreOffice ni wkhtmltopdf. | [A CONFIRMAR] qué recurso son los 10 GB informados (ver Q-05) y consumo real de RAM |
 | RNF-07 | Seguridad | Endpoints de administración con `X-API-Key`; secretos solo en variables de entorno; el Excel nunca queda público; la API solo acepta pedidos de navegador desde el frontend (`FRONTEND_ORIGINS`). | [HECHO] |
 | RNF-08 | Privacidad | Sin datos de pacientes reales en el repo ni en R2 hasta tener autorización formal. | Vigente |
 | RNF-09 | Compatibilidad | Python 3.12; versiones fijadas en `requirements.txt`. | [HECHO] |
-| RNF-10 | Mantenibilidad | Módulos RTU aditivos, sin romper los endpoints legacy mientras convivan. | Vigente |
+| RNF-10 | Mantenibilidad | El servicio solo contiene el sistema RTU; el legacy está archivado fuera de la imagen (ADR-19). | [HECHO] |
 | RNF-11 | Tiempo de evaluación offline | Poder correr con pocas réplicas mientras se desarrolla. | [PENDIENTE] parámetro `--replicas` |
 
 ---
@@ -150,7 +150,6 @@ flowchart LR
     U[Médico / navegador] --> FE[Frontend React<br/>vacunas.pages.dev]
     FE -->|HTTPS JSON| API[API FastAPI<br/>Render, Docker]
     API --> R2[(Cloudflare R2<br/>Excel histórico)]
-    API --> LEG[Módulos legacy<br/>vacunas]
     API --> RTU[Módulos RTU<br/>Markov + estimación + compras]
     GH[GitHub<br/>GuillermoRivero98/vacunas] -->|push a main| API
 ```
@@ -390,9 +389,9 @@ Glaucoma y cristalino **no se usan** por decisión de diseño (ADR-07).
 - `frontend/.env.production` y `frontend/.env.development` **sí** van al repo: solo contienen la dirección pública de la API.
 - Los Excel **no se suben al repo**: se regeneran con `python generar_datos_rtu.py .` (semilla fija, resultado idéntico).
 - La verdad oculta **nunca** va a R2 ni a producción.
-- El histórico RTU **no reemplaza** al Excel legacy en R2: la API legacy espera otro esquema y se rompería.
+- El Excel legacy (`historico_vacunas.xlsx`) quedó en R2 sin uso desde ADR-19; se puede borrar desde el panel de Cloudflare.
 
-### 9.4 Esquema legacy (vacunas)
+### 9.4 Esquema legacy (vacunas, archivado)
 
 Columnas mínimas que exige `motor_probabilidades.correr_pipeline`: `paciente_id, edad, comorbilidad, laboratorio, vacuna, nro_dosis_en_tratamiento, resultado`. Columnas extendidas opcionales que usa `red_bayesiana.py`: `diabetes, hipertension, acv_iam, alergias, tabaquismo, antecedentes_familiares, reaccion_adversa_previa, intervalo_semanas`.
 
@@ -415,33 +414,23 @@ Columnas mínimas que exige `motor_probabilidades.correr_pipeline`: `paciente_id
 | `compras_rtu.py` | Estimación de compra: uso histórico, esperanza y varianza exactas, calibración, backtest (RF-21, RF-22) | estimación, supuestos | [HECHO] |
 | `tests/referencia_pgmpy.py` | Versión del grafo con pgmpy, **solo** para verificar en los tests que las fórmulas dan lo mismo | pgmpy | [HECHO] |
 | `servicio_rtu.py` | Modelo en memoria con invalidación por ETag; arma la respuesta (T5.4, T5.5) | todos los anteriores, R2 | [HECHO] |
-| `tests/` , `pytest.ini`, `requirements-dev.txt` | 40 tests automáticos | — | [HECHO] |
+| `tests/` , `pytest.ini`, `requirements-dev.txt` | 41 tests automáticos (`requirements-dev.txt` incluye pgmpy solo para el test de referencia) | — | [HECHO] |
 
 Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu`, `esquema_rtu`, `explicacion_rtu`, `servicio_rtu` y `compras_rtu`. Quedan afuera las herramientas offline (`generar_datos_rtu`, `evaluar_rtu`, `fase4_rtu`, `tests/`).
 
-### 10.2 Módulos legacy (en producción)
+### 10.2 Infraestructura del servicio
 
 | Archivo | Rol |
 |---|---|
-| `api.py` | FastAPI, endpoints legacy |
-| `motor_probabilidades.py` | Camino A legacy (Beta, chi-cuadrado, orden por p) |
-| `red_bayesiana.py`, `pipeline_bayesiano.py` | Camino B legacy |
-| `almacenamiento_r2.py` | Subida y descarga del Excel en R2 |
-| `generar_reporte.py` | Reporte HTML/PDF (wkhtmltopdf, LibreOffice) |
-| `generar_datos_sinteticos.py`, `comparar_caminos.py` | Herramientas legacy de demo y análisis |
-| `Dockerfile` | Python 3.12-slim + LibreOffice + wkhtmltopdf |
-| `requirements.txt` | Dependencias fijadas |
-| `INSTRUCCIONES_DEPLOY.txt` | Notas de integración del Camino B legacy (ya aplicadas; menciona `api-vacunas`, desactualizado) |
+| `api.py` | FastAPI: solo los endpoints RTU (sección 10.4) |
+| `almacenamiento_r2.py` | Subida y descarga del histórico en R2 |
+| `Dockerfile` | Python 3.12-slim y las dependencias de `requirements.txt`; nada más |
+| `requirements.txt` | Dependencias de producción, fijadas (sin pgmpy ni matplotlib desde ADR-19) |
+| `frontend/` | Interfaz web (sección 13, fase 6) |
 
-### 10.3 Endpoints legacy vigentes
+### 10.3 Sistema legacy (archivado en `archivo/legacy/`)
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/health` | `{"status": "ok", "excel_cargado": bool}` |
-| POST | `/calcular-orden` | Camino A legacy. Body `{"edad", "comorbilidad", "vacunas_previas"?}` |
-| POST | `/calcular-orden-bayesiano` | Camino B legacy, mismo body |
-| POST | `/calcular-orden/reporte` | PDF del Camino A |
-| POST | `/admin/actualizar-historico` | Reemplaza el Excel legacy en R2 (`X-API-Key`) |
+Retirado de producción el 2026-09-24 (ADR-19): `motor_probabilidades.py`, `red_bayesiana.py`, `pipeline_bayesiano.py`, `generar_reporte.py`, `generar_datos_sinteticos.py`, `comparar_caminos.py`, `INSTRUCCIONES_DEPLOY.txt` y el código de los endpoints `/calcular-orden`, `/calcular-orden-bayesiano`, `/calcular-orden/reporte` y `/admin/actualizar-historico` (`endpoints_legacy.py`). No se importa ni entra en la imagen. `archivo/legacy/LEEME.md` explica qué era cada cosa, los bugs que quedaron sin corregir y cómo reactivarlo.
 
 ### 10.4 Endpoints RTU
 
@@ -473,13 +462,14 @@ Pruebas legacy contra el deploy (2026-09-22): validación con Pydantic (edad 0 a
 | ADR-08 | Horizonte infinito en la cadena | La matriz fundamental lo resuelve en forma cerrada; se compara contra la verdad, no contra los conteos censurados | Horizonte finito |
 | ADR-09 | Excel en R2 y no en disco de Render | Render no garantiza disco persistente entre deploys | Filesystem local |
 | ADR-10 | CORS `*` por defecto | No hay cookies ni sesión; el endpoint sensible usa `X-API-Key` | Lista fija de orígenes (configurable con `FRONTEND_ORIGINS`) |
-| ADR-11 | pgmpy fijado en 1.1.2 (hoy solo lo usan el legacy y un test de referencia) | `BayesianEstimator` se elimina en 1.3.0 | Actualizar sin migrar |
+| ADR-11 | pgmpy fijado en 1.1.2 (desde ADR-19, solo en `requirements-dev.txt` para el test de referencia) | `BayesianEstimator` se elimina en 1.3.0 | Actualizar sin migrar |
 | ADR-12 | Evaluación de políticas con oráculo de réplicas separadas | Elegir y puntuar con la misma simulación infla el techo | Oráculo *in-sample* |
 | ADR-13 | Objetivo por defecto: maximizar P(estable) | El médico quiere saber qué fármaco tiene más chances de funcionar; las inyecciones se muestran como dato secundario | Minimizar inyecciones por defecto |
 | ADR-15 | No entrenar al arrancar el servicio; el precalentamiento lo dispara `/health` | Un primer intento entrenaba al arrancar, en otro hilo: en el plan gratuito de Render el servidor no llegó a abrir el puerto a tiempo ("port scan timeout") y el deploy falló. Con el servidor ya escuchando no hay problema | Entrenar en el evento de arranque |
 | ADR-16 | **Todo probabilidad clásica: se sigue con el grafo y se desactiva el Camino A.** El grafo se calcula con fórmulas sobre conteos de pandas, sin pgmpy | Pedido explícito: nada de *machine learning* ni IA. Las fórmulas dan exactamente lo mismo que pgmpy, se pueden seguir a mano y entrenan 40 veces más rápido. El Camino A queda comentado con `#` | Mantener los dos caminos; seguir con pgmpy |
 | ADR-18 | Frontend en la carpeta `frontend/` de este repo, con Vite + React + TypeScript, sin librerías de componentes | Una sola fuente de verdad (este README); Render no se ve afectado porque su `Dockerfile` copia archivos puntuales; pocas dependencias | Repo aparte; librería de componentes |
 | ADR-17 | Estimación de compra con esperanza y varianza exactas (programación dinámica) + calibración con backtests del propio histórico | Exacto y auditable; la calibración corrige el sesgo por heterogeneidad entre ojos (desigualdad de Jensen) que el backtest mostró | Simulación Monte Carlo; usar el modelo sin calibrar; programación lineal (queda como trabajo futuro para optimizar costos) |
+| ADR-19 | **Retirar el sistema legacy de vacunas** a `archivo/legacy/` (código conservado, fuera de la imagen) | Nadie lo usaba: el frontend solo usa RTU. Saca LibreOffice, wkhtmltopdf, pgmpy y matplotlib de producción (dependencias de Python: 663 → 391 MB) y cumple del todo P8 | Mantenerlo y corregir sus bugs |
 | ADR-14 | Explicación por casos similares ordenados por una fórmula de distancia (determinística, sin aprendizaje) | Auditable y reproducible (P1); le muestra al médico casos concretos, no solo un número. Aplica igual si la estimación viene del Camino B, que no tiene "casos" propios | Explicación generada por un LLM |
 
 ---
@@ -610,7 +600,16 @@ Parado en la semana 104, pronóstico de las 52 semanas siguientes con datos hast
 - `FRONTEND_ORIGINS=https://vacunas.pages.dev` configurado en Render; el servicio reinició y volvió a entrenar solo. Verificación de encabezados: con `Origin: https://vacunas.pages.dev` la API responde `Access-Control-Allow-Origin: https://vacunas.pages.dev`; con `Origin: https://otro-sitio.com` no envía el encabezado, así que un navegador en otro sitio no puede leer las respuestas.
 - Mejora T6.8 verificada con un servidor simulado que responde `/health` pero no `/rtu/info`: la página muestra que el servidor tiene una versión anterior y sugiere revisar el deploy de Render.
 
-### 12.12 Hallazgos para el informe
+### 12.12 Fase 7: legacy retirado (2026-09-24, local)
+
+- `api.py` expone solo `/health`, `/rtu/sugerir-plan`, `/rtu/estimacion-compra`, `/rtu/info` y `/admin/rtu/actualizar-historico`; `/health` ya no informa `excel_cargado`.
+- En un entorno limpio con solo `requirements.txt` (sin pgmpy instalado), una copia con los archivos que copia el `Dockerfile` importa la API sin errores y no carga pgmpy, scikit-learn, statsmodels ni matplotlib.
+- Dependencias de Python instaladas: 391 MB, contra 663 MB con pgmpy y matplotlib. La imagen además deja de instalar LibreOffice y wkhtmltopdf.
+- `fase4_rtu.py --replicas 10`: 14 s en lugar de 81 s, con indicador de avance; los resultados tienen más ruido (techo 23.97 contra 23.26 con 60 réplicas), así que los números del informe siguen saliendo con 60.
+- 41 tests pasan (nuevo: la API no expone rutas legacy).
+- [PENDIENTE] medir el tiempo de build y el arranque en Render con la imagen nueva.
+
+### 12.13 Hallazgos para el informe
 
 1. **Maldición de la dimensionalidad:** la red completa rinde peor que no usar covariables; la factorizada es la mejor prediciendo visitas.
 2. **Sesgo de selección:** sin estratificar por línea, FarmacoC queda subestimado y el ranking se degrada.
@@ -711,17 +710,17 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 
 **Diseño:** fondo gris azulado como la pantalla de un equipo de OCT; un azul para las acciones; tres colores fijos para los desenlaces (verde azulado = estable, ámbar = cambio de fármaco, gris = abandono). Tipografía *Atkinson Hyperlegible*, creada para personas con baja visión. El elemento central es la **banda de desenlaces**: una barra dividida en tres tramos que suman 100%, como las capas de un corte de OCT. Tokens en `frontend/src/estilos.css`.
 
-### Fase 7: limpieza y deuda técnica [PENDIENTE]
+### Fase 7: limpieza y deuda técnica [HECHO en local; T7.6 la hace el usuario]
 
-| Id | Tarea |
-|---|---|
-| T7.1 | BUG-01 a BUG-03 (sección 14) |
-| T7.2 | `.gitignore`: `venv/`, `.venv/`, `*.xlsx` generados, `__pycache__/` |
-| T7.3 | Quitar rutas de sandbox de otras sesiones (`/mnt/user-data/...`, `/home/claude/...`) de los bloques `__main__` legacy |
-| T7.4 | Parámetro `--replicas` e indicador de progreso en `fase4_rtu.py` (RNF-11) |
-| T7.5 | Archivar `INSTRUCCIONES_DEPLOY.txt` (refiere a `api-vacunas`) |
-| T7.6 | `api-vacunas` está en desuso: archivar el repo en GitHub y suspender o borrar su servicio en Render para evitar confusiones |
-| T7.7 | Decidir cuándo se deprecan los endpoints legacy |
+| Id | Tarea | Estado |
+|---|---|---|
+| T7.1 | BUG-01 a BUG-03: **no se corrigen**, el código legacy se archivó (ADR-19); quedan documentados en `archivo/legacy/LEEME.md` | [HECHO] |
+| T7.2 | `.gitignore`: `venv/`, `.venv/`, `*.xlsx` generados, `__pycache__/`, con excepción para la configuración pública del frontend | [HECHO] |
+| T7.3 | Rutas de otras sesiones (`/mnt/user-data/...`, `/home/claude/...`): solo estaban en archivos legacy, ya archivados; el código activo no tiene ninguna | [HECHO] |
+| T7.4 | Parámetro `--replicas` e indicador de progreso en `fase4_rtu.py` (RNF-11) | [HECHO] |
+| T7.5 | Archivar `INSTRUCCIONES_DEPLOY.txt` (refiere a `api-vacunas`) | [HECHO] |
+| T7.6 | `api-vacunas` está en desuso: archivar el repo en GitHub y suspender o borrar su servicio en Render para evitar confusiones | [PENDIENTE] (desde la cuenta del usuario) |
+| T7.7 | Retirar los endpoints legacy: decidido y hecho (ADR-19) | [HECHO] |
 
 ### Fase 8: personalización con la historia del ojo [PENDIENTE, opcional]
 
@@ -729,7 +728,7 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 
 ### Fase 9: informe y presentación [PENDIENTE]
 
-Escribir los hallazgos de la sección 12.12, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
+Escribir los hallazgos de la sección 12.13, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
 
 ### Trabajo futuro (fuera de alcance)
 
@@ -743,13 +742,9 @@ Escribir los hallazgos de la sección 12.12, las limitaciones (sección 14) y el
 
 ## 14. Riesgos, limitaciones y deuda técnica
 
-### 14.1 Bugs conocidos en código legacy
+### 14.1 Bugs conocidos
 
-| Id | Ubicación | Problema | Impacto |
-|---|---|---|---|
-| BUG-01 | `pipeline_bayesiano.py`, bootstrap | `isin(set(...))` elimina los pacientes repetidos: no es un bootstrap real | Intervalos ~25% más angostos de lo correcto |
-| BUG-02 | `motor_probabilidades.filtrar_similares` | Con `vacunas_previas` usa también las filas de las vacunas ya probadas (todas fracasos) | Las vacunas ya probadas aparecen como candidatas con p ≈ 0 |
-| BUG-03 | `pipeline_bayesiano.py`, comparaciones pareadas | Compara listas de muestras recortadas que pueden no estar alineadas si falló algún remuestreo | Menor |
+Ninguno en el código activo. Los tres bugs del legacy (BUG-01 a BUG-03) quedaron sin corregir porque ese código se archivó (ADR-19); están descritos en `archivo/legacy/LEEME.md`.
 
 ### 14.2 Limitaciones del modelo
 
@@ -765,13 +760,12 @@ Escribir los hallazgos de la sección 12.12, las limitaciones (sección 14) y el
 - **Configuración pública del frontend en el repo.** `frontend/.env.production` y `frontend/.env.development` no tienen secretos y deben estar en GitHub (el `.gitignore` tiene excepciones para ellos). Los secretos (`ADMIN_API_KEY`, credenciales de R2) van solo en las variables de entorno de Render.
 
 - Arranque en frío del plan gratuito de Render.
-- Recursos del plan de Render con pgmpy y sus dependencias (RNF-06, Q-05).
+- Recursos del plan de Render (RNF-06, Q-05).
 - Trabajo pesado durante el arranque: puede impedir que Render detecte el puerto y hacer fallar el deploy (ADR-15). Todo entrenamiento debe ocurrir con el servidor ya escuchando.
 - Un deploy fallido no se nota en producción, porque sigue en línea la versión anterior: después de cada push, confirmar en **Events** que el deploy quedó *live* y chequear en `/health` los campos esperados.
 - Mostrar casos al médico: riesgo de reidentificación si en el futuro se usan datos reales con pocos casos por celda. Mitigación: solo IDs anónimos y no mostrar celdas con muy pocos casos.
-- pgmpy 1.3 elimina `BayesianEstimator`: afecta solo al legacy y al test de referencia. Cuando se deprequen los endpoints legacy (T7.7) se puede quitar pgmpy de `requirements.txt`.
+- pgmpy 1.3 elimina `BayesianEstimator`: afecta solo al test de referencia (`requirements-dev.txt`), que se salta solo si pgmpy no está instalado.
 - La calibración de compras supone que el sesgo medido en ventanas pasadas se mantiene. Con datos reales conviene revisarla periódicamente.
-- Endpoints legacy y RTU conviviendo: riesgo de subir el Excel equivocado al objeto equivocado (mitigado por T5.1 y T5.2).
 
 ---
 
@@ -819,19 +813,17 @@ python -W ignore fase4_rtu.py                       # fase 4: ~4 min en Windows
 
 `-W ignore` oculta los `FutureWarning` de pgmpy, que no afectan con la versión 1.1.2.
 
-### 16.3 API legacy en local
+### 16.3 Evaluación rápida mientras se desarrolla
 
 ```powershell
-uvicorn api:app --reload
+python -W ignore fase4_rtu.py --replicas 10   # ~6 veces más rápido, con más ruido
 ```
-
-`/calcular-orden/reporte` necesita wkhtmltopdf o LibreOffice instalados; el resto no.
 
 ### 16.4 Tests y API RTU en local
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest -q                                   # 40 tests
+python -m pytest -q                                   # 41 tests
 python compras_rtu.py                                 # backtest y estimación de compra
 $env:RTU_HISTORICO_LOCAL = "historico_rtu_SIMULADO.xlsx"
 uvicorn api:app --reload                              # abrir http://127.0.0.1:8000/docs
@@ -916,3 +908,4 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-24 | Frontend probado localmente en Windows. Ajustes: mensaje de error de conexión más preciso, ícono de la página, aviso de sintaxis de los tests eliminado. |
 | 2026-09-24 | Fase 6 publicada: frontend en https://vacunas.pages.dev (Cloudflare Pages conectado a GitHub), `/rtu/info` en Render, `FRONTEND_ORIGINS` configurado. Problemas del primer deploy registrados en 12.11 y 14.3. Mejora T6.8 (dirección por defecto y aviso ante 404). |
 | 2026-09-24 | CORS verificado en producción (commit `66da1ef`). **Fase 6 cerrada.** |
+| 2026-09-24 | Fase 7: sistema legacy de vacunas retirado a `archivo/legacy/` (ADR-19); imagen sin LibreOffice, wkhtmltopdf, pgmpy ni matplotlib; `fase4_rtu.py --replicas`; 41 tests. Pendiente: T7.6 (archivar `api-vacunas`) y medir el build en Render. |

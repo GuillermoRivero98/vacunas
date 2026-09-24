@@ -1,17 +1,15 @@
 """
-API mínima que envuelve el motor de cálculo determinístico.
+API del sistema de apoyo a la decisión para tratamiento intravítreo (RTU).
 
 Endpoints:
-  GET  /health                  -> chequeo de vida
-  POST /calcular-orden          -> corre el pipeline completo y devuelve JSON
-  POST /calcular-orden/reporte  -> igual, pero devuelve el PDF del reporte
-  POST /calcular-orden-bayesiano -> Camino B (red bayesiana), mismo formato
-
-RTU (inyecciones intravítreas, ver README):
+  GET  /health                          -> estado del servicio y del modelo
   POST /rtu/sugerir-plan                -> recomendación + casos similares
   POST /admin/rtu/actualizar-historico  -> sube, valida y activa el histórico RTU
   POST /rtu/estimacion-compra           -> demanda y compra sugerida por fármaco
   GET  /rtu/info                        -> fármacos, tamaño del histórico, supuestos (para la interfaz)
+
+Los endpoints legacy de "orden de vacunación" (/calcular-orden y afines)
+se retiraron el 2026-09-24 (ADR-19); su código está en archivo/legacy/.
 
 El Excel histórico vive en Cloudflare R2 (ver almacenamiento_r2.py) --
 Render (plan gratis/starter) no garantiza disco persistente entre
@@ -21,21 +19,13 @@ el diseño.
 """
 import io
 import os
-import shutil
-import tempfile
-
 from typing import Literal
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Depends
+from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field, model_validator
 
 import almacenamiento_r2
-from motor_probabilidades import correr_pipeline, resultado_a_dict
-from pipeline_bayesiano import correr_pipeline_bayesiano, resultado_bayesiano_a_dict
-from generar_reporte import generar_html, convertir_a_pdf
 from esquema_rtu import EsquemaInvalido, leer_y_validar
 from servicio_rtu import (
     HistoricoNoDisponible,
@@ -47,7 +37,7 @@ from servicio_rtu import (
     precalentar_desde_entorno,
 )
 
-app = FastAPI(title="Motor de orden de vacunación / RTU", version="0.2.0")
+app = FastAPI(title="Plan de tratamiento intravítreo (RTU)", version="0.3.0")
 
 # Servicio RTU: por defecto lee el histórico desde R2. Para desarrollo
 # local sin R2 se puede apuntar a un archivo con RTU_HISTORICO_LOCAL.
@@ -87,17 +77,6 @@ def verificar_api_key(x_api_key: str = Header(None)):
         raise HTTPException(401, "API key inválida o faltante (header X-API-Key).")
 
 
-class CasoPaciente(BaseModel):
-    # ge/le acotan el rango de edad a algo clínicamente razonable;
-    # Literal[0, 1] rechaza cualquier valor de comorbilidad que no sea
-    # exactamente 0 o 1 -- antes ambos aceptaban cualquier entero
-    # (incluida edad negativa) sin avisar, ver README, sección
-    # "Limitaciones conocidas".
-    edad: int = Field(ge=0, le=120)
-    comorbilidad: Literal[0, 1]
-    vacunas_previas: list[str] | None = None
-
-
 @app.get("/health")
 def health():
     # rtu_historico_cargado: si hay Excel RTU en R2 (o en el archivo
@@ -114,73 +93,10 @@ def health():
         servicio_rtu.precalentar_en_segundo_plano()
     return {
         "status": "ok",
-        "excel_cargado": almacenamiento_r2.excel_disponible(),
         "rtu_historico_cargado": rtu_cargado,
         **servicio_rtu.estado(),
     }
 
-
-@app.post("/admin/actualizar-historico")
-async def actualizar_historico(archivo: UploadFile = File(...), _=Depends(verificar_api_key)):
-    """Reemplaza el Excel histórico en R2. Requiere el header X-API-Key
-    con el valor configurado en ADMIN_API_KEY."""
-    try:
-        almacenamiento_r2.subir_historico(archivo.file)
-    except RuntimeError as e:
-        raise HTTPException(500, str(e))
-    return {"status": "actualizado"}
-
-
-@app.post("/calcular-orden")
-def calcular_orden(caso: CasoPaciente):
-    if not almacenamiento_r2.excel_disponible():
-        raise HTTPException(500, "No hay Excel histórico cargado todavía.")
-    try:
-        resultado = correr_pipeline(almacenamiento_r2.descargar_historico(), caso.model_dump())
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-    return resultado_a_dict(resultado)
-
-
-@app.post("/calcular-orden-bayesiano")
-def calcular_orden_bayesiano(caso: CasoPaciente):
-    if not almacenamiento_r2.excel_disponible():
-        raise HTTPException(500, "No hay Excel histórico cargado todavía.")
-    try:
-        resultado = correr_pipeline_bayesiano(
-            almacenamiento_r2.descargar_historico(), caso.model_dump()
-        )
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-    return resultado_bayesiano_a_dict(resultado)
-
-
-@app.post("/calcular-orden/reporte")
-def calcular_orden_reporte(caso: CasoPaciente):
-    if not almacenamiento_r2.excel_disponible():
-        raise HTTPException(500, "No hay Excel histórico cargado todavía.")
-    try:
-        resultado = correr_pipeline(almacenamiento_r2.descargar_historico(), caso.model_dump())
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-
-    # No usamos "with tempfile.TemporaryDirectory()" porque borraría la
-    # carpeta apenas termina esta función -- FileResponse recién lee el
-    # archivo DESPUÉS, de forma asíncrona, y se rompía (bug real, se
-    # encontró al probar este endpoint por primera vez de punta a punta).
-    # En su lugar: carpeta temporal sin auto-borrado, y limpieza recién
-    # después de que la respuesta terminó de enviarse (background task).
-    tmp = tempfile.mkdtemp()
-    path_html = f"{tmp}/reporte.html"
-    generar_html(resultado, path_html)
-    path_pdf = convertir_a_pdf(path_html)
-    return FileResponse(
-        path_pdf, media_type="application/pdf",
-        filename="reporte_orden_vacunacion.pdf",
-        background=BackgroundTask(shutil.rmtree, tmp, ignore_errors=True),
-    )
 
 # ===========================================================================
 # RTU -- inyecciones intravítreas (fase 5, ver README secciones 4 y 13)

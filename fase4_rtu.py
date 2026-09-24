@@ -156,7 +156,8 @@ def simular_orden(pac: gen.Paciente, u_ojo: float, orden: tuple[str, ...],
     return iny, False
 
 
-def tabla_verdad_por_orden(ojos: list[dict], n_replicas: int = N_REPLICAS) -> tuple[dict, dict]:
+def tabla_verdad_por_orden(ojos: list[dict], n_replicas: int = N_REPLICAS,
+                           progreso: bool = True) -> tuple[dict, dict]:
     """Para cada ojo y cada orden: (inyecciones medias, P(estable)) con la
     verdad, en DOS mitades independientes de réplicas: la mitad "sel"
     solo la usa el oráculo para elegir, y la mitad "eval" se usa para
@@ -165,7 +166,13 @@ def tabla_verdad_por_orden(ojos: list[dict], n_replicas: int = N_REPLICAS) -> tu
     aleatorios comunes entre órdenes dentro de cada réplica."""
     ordenes = list(permutations(gen.FARMACOS))
     sel, ev = {}, {}
+    t0 = time.time()
+    paso = max(1, len(ojos) // 10)
     for j, o in enumerate(ojos):
+        if progreso and j and j % paso == 0:
+            hecho = j / len(ojos)
+            resta = (time.time() - t0) * (1 - hecho) / hecho
+            print(f"  {hecho:4.0%} de los ojos simulados, faltan ~{resta:.0f} s", flush=True)
         for orden in ordenes:
             acum = {0: [0, 0, 0], 1: [0, 0, 0]}  # mitad -> [iny, estable, n]
             for r in range(n_replicas):
@@ -200,8 +207,17 @@ def puntuar_politicas(ojos, tabla_sel, tabla_eval, elecciones: dict[str, list[tu
 
 
 if __name__ == "__main__":
-    path_hist = sys.argv[1] if len(sys.argv) > 1 else "historico_rtu_SIMULADO.xlsx"
-    path_verdad = sys.argv[2] if len(sys.argv) > 2 else "verdad_oculta_rtu_SIMULADO.xlsx"
+    import argparse
+    ap = argparse.ArgumentParser(description="Fase 4: test de independencia y evaluación de políticas.")
+    ap.add_argument("historico", nargs="?", default="historico_rtu_SIMULADO.xlsx")
+    ap.add_argument("verdad", nargs="?", default="verdad_oculta_rtu_SIMULADO.xlsx")
+    ap.add_argument("--replicas", type=int, default=N_REPLICAS,
+                    help=f"réplicas por ojo y orden (default {N_REPLICAS}; con 10 corre ~6 veces más rápido, "
+                         "útil mientras se desarrolla; los números del README usan 60)")
+    args = ap.parse_args()
+    if args.replicas < 2 or args.replicas % 2:
+        ap.error("--replicas tiene que ser par y >= 2 (la mitad elige el oráculo, la otra mitad puntúa)")
+    path_hist, path_verdad = args.historico, args.verdad
     historico = pd.read_excel(path_hist)
     verdad = pd.read_excel(path_verdad)
     pd.set_option("display.width", 160)
@@ -222,10 +238,10 @@ if __name__ == "__main__":
     print("=" * 78)
     train, test = particionar(historico)
     ojos = reconstruir_ojos(test, verdad)
-    print(f"Ojos de test: {len(ojos)} | órdenes por ojo: 6 | réplicas: {N_REPLICAS}")
+    print(f"Ojos de test: {len(ojos)} | órdenes por ojo: 6 | réplicas: {args.replicas}")
 
     t0 = time.time()
-    tabla_sel, tabla_eval = tabla_verdad_por_orden(ojos)
+    tabla_sel, tabla_eval = tabla_verdad_por_orden(ojos, args.replicas)
     print(f"Simulación de la verdad: {time.time() - t0:.0f}s")
 
     # a = EstimadorBeta(train)   # Camino A desactivado (ADR-16)

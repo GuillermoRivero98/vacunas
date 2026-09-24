@@ -2,3 +2,6 @@
 -r requirements.txt
 pytest==8.3.3
 httpx==0.28.1
+# Solo para tests/referencia_pgmpy.py: comprueba que el grafo calculado con
+# fórmulas (estimacion_rtu.py) da exactamente lo mismo que esta librería.
+pgmpy==1.1.2

@@ -400,3 +400,13 @@ def test_info(cliente):
         time.sleep(0.5)
     assert j["listo"] and sorted(j["farmacos"]) == sorted(gen.FARMACOS)
     assert j["historico"]["pacientes"] == N_PACIENTES_TEST
+
+
+def test_api_solo_expone_rtu(cliente):
+    """ADR-19: los endpoints legacy de vacunas se retiraron."""
+    import api
+    rutas = {r.path for r in api.app.routes if hasattr(r, "methods")}
+    for legacy in ("/calcular-orden", "/calcular-orden-bayesiano", "/calcular-orden/reporte",
+                   "/admin/actualizar-historico"):
+        assert legacy not in rutas
+    assert "excel_cargado" not in cliente.get("/health").json()
