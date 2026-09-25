@@ -105,13 +105,13 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-03 | Modelar el protocolo T&E como cadena de Markov absorbente y calcular visitas, inyecciones, semanas y probabilidades de absorción. | [HECHO] |
 | RF-04 | Estimar `p_activo(estado, paciente, fármaco, línea)` con el Camino A (Beta). | **[DESACTIVADO]** comentado con `#` (ADR-16) |
 | RF-05 | Estimar `p_activo` con el grafo probabilístico (red bayesiana), calculado con fórmulas clásicas sobre conteos de pandas. **Único método del sistema.** | [HECHO] |
-| RF-06 | Si falta un dato del paciente, el Camino B marginaliza esa variable en vez de fallar. | [HECHO] |
+| RF-06 | Si falta un dato del paciente, el grafo marginaliza esa variable en vez de fallar. | [HECHO] |
 | RF-07 | Recomendar fármacos y su orden. **Objetivo por defecto: maximizar P(estable)** (el fármaco con más chances de funcionar); alternativo: minimizar inyecciones esperadas. | [HECHO] |
 | RF-08 | Recomendación consciente de línea (posición 1 con estimación de línea 1, siguientes con línea 2+). | [HECHO] |
 | RF-09 | Testear la independencia entre fármacos (Cochran-Mantel-Haenszel). | [HECHO] |
 | RF-10 | Evaluar estimadores y políticas contra la verdad oculta. | [HECHO] |
-| RF-11 | Endpoint de API que devuelva la recomendación para un caso (`POST /rtu/sugerir-plan`). | [HECHO] en local; deploy pendiente (T5.9) |
-| RF-12 | Endpoint protegido para cargar el histórico RTU en R2 y reentrenar (`POST /admin/rtu/actualizar-historico`). | [HECHO] en local; deploy pendiente (T5.9) |
+| RF-11 | Endpoint de API que devuelva la recomendación para un caso (`POST /rtu/sugerir-plan`). | [HECHO] desplegado |
+| RF-12 | Endpoint protegido para cargar el histórico RTU en R2 y reentrenar (`POST /admin/rtu/actualizar-historico`). | [HECHO] desplegado |
 | RF-13 | Validar el esquema del Excel RTU al subirlo y rechazar con mensaje claro si no cumple. | [HECHO] |
 | RF-14 | Frontend: formulario del paciente, recomendación con explicación y pantalla de compra. | [HECHO] publicado en https://vacunas.pages.dev |
 | RF-15 | Excluir fármacos ya probados y calcular la línea a partir de ellos. | [HECHO] |
@@ -119,7 +119,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-17 | Personalizar `p_activo` con la historia observada del propio ojo. | [PENDIENTE] Fase 8, opcional |
 | RF-18 | Resumen en lenguaje natural por LLM con reglas de *grounding* (P1). | [PENDIENTE] Opcional, sin decidir |
 | RF-19 | **Explicación por casos similares:** junto con cada recomendación, mostrar en qué casos históricos se basa: cuántos casos parecidos hubo por fármaco, cómo les fue (estable / switch / abandono, inyecciones) y un listado de los N casos más parecidos con sus características y su evolución. | [HECHO] |
-| RF-21 | **Estimación de compra:** demanda esperada, desvío y compra sugerida por fármaco en un horizonte, a un nivel de servicio dado, según el uso histórico de cada fármaco (`POST /rtu/estimacion-compra`). | [HECHO] en local |
+| RF-21 | **Estimación de compra:** demanda esperada, desvío y compra sugerida por fármaco en un horizonte, a un nivel de servicio dado, según el uso histórico de cada fármaco (`POST /rtu/estimacion-compra`). | [HECHO] desplegado |
 | RF-22 | Calibrar la estimación de compra con backtests sobre el propio histórico y mostrar la calibración usada. | [HECHO] |
 | RF-20 | Los casos mostrados al médico se identifican solo con IDs anónimos del histórico, nunca con datos personales. | [HECHO] (el histórico tampoco debe contener datos personales) |
 
@@ -137,7 +137,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RNF-08 | Privacidad | Sin datos de pacientes reales en el repo ni en R2 hasta tener autorización formal. | Vigente |
 | RNF-09 | Compatibilidad | Python 3.12; versiones fijadas en `requirements.txt`. | [HECHO] |
 | RNF-10 | Mantenibilidad | El servicio solo contiene el sistema RTU; el legacy está archivado fuera de la imagen (ADR-19). | [HECHO] |
-| RNF-11 | Tiempo de evaluación offline | Poder correr con pocas réplicas mientras se desarrolla. | [PENDIENTE] parámetro `--replicas` |
+| RNF-11 | Tiempo de evaluación offline | Poder correr con pocas réplicas mientras se desarrolla. | [HECHO] `fase4_rtu.py --replicas` (T7.4) |
 
 ---
 
@@ -183,7 +183,7 @@ flowchart LR
 |---|---|---|
 | `GuillermoRivero98/vacunas` → `vacunas-mwyr.onrender.com` | **Repo y servicio actual.** Todo el desarrollo va acá. | Activo |
 | `GuillermoRivero98/api-vacunas` → `api-vacunas.onrender.com` | **Primera versión, en desuso.** Se le portaron los fixes de R2 (commit `ec8e8a4`). No se desarrolla más ahí. | Obsoleto (ver T7.6) |
-| Frontend | No existe todavía. Menciones anteriores a `api.ts`, `types.ts` o `ResultadoView.tsx` no corresponden a nada vigente. | [PENDIENTE] fase 6 |
+| Frontend | Carpeta `frontend/` de este repo, publicado en `https://vacunas.pages.dev` (Cloudflare Pages). Menciones antiguas a `ResultadoView.tsx` o `types.ts` no corresponden a nada vigente. | Activo |
 
 ---
 
@@ -399,7 +399,7 @@ Columnas mínimas que exige `motor_probabilidades.correr_pipeline`: `paciente_id
 
 ## 10. Estructura del repositorio
 
-### 10.1 Módulos RTU (nuevos, aditivos)
+### 10.1 Módulos RTU
 
 | Archivo | Rol | Usa | Estado |
 |---|---|---|---|
@@ -668,9 +668,9 @@ Estado: T5.1 a T5.15 **[HECHO]**, desplegadas y medidas en Render (sección 12.9
 ```
 
 - `diagnostico`: DMRE, EMD, OVCR u ORVR. `tipo_mnv` solo con DMRE.
-- Comorbilidades opcionales: si faltan, el Camino B las marginaliza (RF-06).
+- Comorbilidades opcionales: si faltan, el grafo las marginaliza (RF-06).
 - `farmacos_ya_probados`: se excluyen de los candidatos y determinan la línea (RF-15).
-- `objetivo`: `estable` (default) o `inyecciones`. `metodo`: `red_factorizada` (default) o `beta`.
+- `objetivo`: `estable` (default) o `inyecciones`. `metodo`: solo `red_factorizada` (ADR-16).
 - `n_casos_similares`: cuántos casos parecidos devolver en la explicación (RF-19).
 
 Respuesta:
@@ -692,8 +692,6 @@ Respuesta:
 
 ### Fase 6: frontend [HECHO]
 
-| Id | Tarea | Criterio de aceptación |
-|---|---|---|
 Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **Paciente** y **Compras**.
 
 | Id | Tarea | Criterio de aceptación | Estado |
@@ -726,7 +724,9 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 
 **Objetivo:** reducir la brecha de ~2 inyecciones hasta el oráculo usando las visitas ya observadas del propio ojo (por ejemplo, un posterior por ojo o un modelo jerárquico). Criterio de aceptación: mejora medible sobre "B por línea" en `fase4_rtu.py`, fuera del error de simulación.
 
-### Fase 9: informe y presentación [PENDIENTE]
+### Fase 9: informe y presentación [EN CURSO]
+
+**Informe para equipos de retina [HECHO]** (2026-09-24): `Informe_herramienta_intravitreo.docx` y su PDF, 10 páginas. Público: médicos de una unidad de retina. Contenido: resumen, problema clínico, qué hace la herramienta (con capturas), cómo calcula en lenguaje clínico, validación con datos simulados (cifras de las secciones 12.4 y 12.8), hallazgos, limitaciones, tabla de supuestos a validar con el equipo clínico, próximos pasos y glosario. No incluye las fotos de RetinApp (datos de una paciente real). Presentación: [PENDIENTE].
 
 Escribir los hallazgos de la sección 12.13, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
 
@@ -773,7 +773,7 @@ Ninguno en el código activo. Los tres bugs del legacy (BUG-01 a BUG-03) quedaro
 
 | Id | Pregunta | Estado |
 |---|---|---|
-| Q-01 | Frontend | **Resuelta:** no existe todavía; se construye en la fase 6. |
+| Q-01 | Frontend | **Resuelta:** construido en la fase 6 y publicado en `https://vacunas.pages.dev`. |
 | Q-02 | ¿Se usa `api-vacunas`? | **Resuelta:** fue la primera versión y no se usa (T7.6). |
 | Q-03 | Objetivo de la recomendación | **Resuelta:** recomendar al médico los fármacos con más chances de funcionar y mostrar en qué casos similares se basó el cálculo (ADR-13, ADR-14, RF-19). |
 | Q-04 | ¿Se incluye el resumen por LLM (RF-18)? | Sin decidir |
@@ -811,7 +811,7 @@ python -W ignore evaluar_rtu.py                     # fase 3: ~20 s
 python -W ignore fase4_rtu.py                       # fase 4: ~4 min en Windows
 ```
 
-`-W ignore` oculta los `FutureWarning` de pgmpy, que no afectan con la versión 1.1.2.
+`-W ignore` oculta avisos de versiones de librerías; no afectan los resultados. Desde ADR-16 el pipeline ya no usa pgmpy.
 
 ### 16.3 Evaluación rápida mientras se desarrolla
 
@@ -910,3 +910,5 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-24 | CORS verificado en producción (commit `66da1ef`). **Fase 6 cerrada.** |
 | 2026-09-24 | Fase 7: sistema legacy de vacunas retirado a `archivo/legacy/` (ADR-19); imagen sin LibreOffice, wkhtmltopdf, pgmpy ni matplotlib; `fase4_rtu.py --replicas`; 41 tests. Pendiente: T7.6 (archivar `api-vacunas`) y medir el build en Render. |
 | 2026-09-24 | Fase 7 desplegada en Render (commit `72a719a`): el servicio solo expone RTU. |
+| 2026-09-24 | Fase 9: informe en Word/PDF para equipos de retina. |
+| 2026-09-24 | Revisión de consistencia del README: estados de RF-11, RF-12, RF-21 y RNF-11 al día; frontend y Q-01 actualizados; contrato sin `beta`; encabezado de tabla huérfano en la fase 6. |
