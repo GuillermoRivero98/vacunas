@@ -410,3 +410,45 @@ def test_api_solo_expone_rtu(cliente):
                    "/admin/actualizar-historico"):
         assert legacy not in rutas
     assert "excel_cargado" not in cliente.get("/health").json()
+
+
+# ------------------------------------------ Fase 8: personalización por ojo
+
+def test_posterior_sin_historia_es_el_prior():
+    import personalizacion_rtu as P
+    assert np.allclose(P.posterior_d(np.array([]), np.array([]), 0.6), P.prior_d(0.6))
+
+
+def test_tau_cero_no_cambia_la_probabilidad():
+    import personalizacion_rtu as P
+    w = P.posterior_d(np.array([0.3, 0.3]), np.array([1, 1]), 0.0)
+    assert np.allclose(P.p_personalizada(np.array([0.3, 0.7]), w), [0.3, 0.7])
+
+
+def test_historia_activa_sube_la_probabilidad():
+    import personalizacion_rtu as P
+    pg = np.full(8, 0.4)
+    activo = P.p_personalizada(0.4, P.posterior_d(pg, np.ones(8), 0.6))[0]
+    seco = P.p_personalizada(0.4, P.posterior_d(pg, np.zeros(8), 0.6))[0]
+    assert seco < 0.4 < activo
+
+
+def test_estimar_tau_recupera_el_valor_real():
+    """Ojos simulados con d ~ Normal(0, 0.7): tau estimado cerca de 0.7."""
+    import personalizacion_rtu as P
+    rng = np.random.default_rng(3)
+    filas = []
+    for o in range(3000):
+        d = rng.normal(0, 0.7)
+        pg = rng.uniform(0.2, 0.6, size=15)
+        y = rng.random(15) < 1 / (1 + np.exp(-(np.log(pg / (1 - pg)) + d)))
+        filas += [{"paciente_id": o, "ojo": "OD", "p_grafo": a, "activo": int(b)} for a, b in zip(pg, y)]
+    assert abs(P.estimar_tau(pd.DataFrame(filas)).tau - 0.7) <= 0.1
+
+
+def test_resumen_en_puntos_conserva_la_media():
+    import personalizacion_rtu as P
+    w = P.posterior_d(np.full(6, 0.35), np.array([1, 1, 0, 1, 1, 1]), 0.5)
+    puntos = P.resumir_en_puntos(w, 5)
+    assert abs(sum(p for _, p in puntos) - 1) < 1e-12
+    assert abs(sum(d * p for d, p in puntos) - float((w * P.GRILLA_D).sum())) < 1e-9

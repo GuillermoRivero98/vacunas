@@ -116,7 +116,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-14 | Frontend: formulario del paciente, recomendación con explicación y pantalla de compra. | [HECHO] publicado en https://vacunas.pages.dev |
 | RF-15 | Excluir fármacos ya probados y calcular la línea a partir de ellos. | [HECHO] |
 | RF-16 | Reporte PDF del resultado RTU. | [PENDIENTE] Opcional |
-| RF-17 | Personalizar `p_activo` con la historia observada del propio ojo. | [PENDIENTE] Fase 8, opcional |
+| RF-17 | Personalizar `p_activo` con la historia observada del propio ojo. | [HECHO] como análisis offline (`personalizacion_rtu.py`, sección 12.13); integración a producción [A DECIDIR] |
 | RF-18 | Resumen en lenguaje natural por LLM con reglas de *grounding* (P1). | [PENDIENTE] Opcional, sin decidir |
 | RF-19 | **Explicación por casos similares:** junto con cada recomendación, mostrar en qué casos históricos se basa: cuántos casos parecidos hubo por fármaco, cómo les fue (estable / switch / abandono, inyecciones) y un listado de los N casos más parecidos con sus características y su evolución. | [HECHO] |
 | RF-21 | **Estimación de compra:** demanda esperada, desvío y compra sugerida por fármaco en un horizonte, a un nivel de servicio dado, según el uso histórico de cada fármaco (`POST /rtu/estimacion-compra`). | [HECHO] desplegado |
@@ -411,10 +411,11 @@ Columnas mínimas que exige `motor_probabilidades.correr_pipeline`: `paciente_id
 | `fase4_rtu.py` | Test CMH y evaluación de políticas | estimación, evaluar | [HECHO] |
 | `esquema_rtu.py` | Validador del Excel RTU (T5.2) | — | [HECHO] |
 | `explicacion_rtu.py` | Casos similares por fórmula de distancia y chequeo de discrepancias (T5.10, T5.11) | estimación | [HECHO] |
+| `personalizacion_rtu.py` | Fase 8: ajuste propio de cada ojo con la regla de Bayes sobre una grilla; estimación de su variabilidad (Bayes empírico); evaluación de predicción de controles | estimación | [HECHO] (offline, no entra en la imagen) |
 | `compras_rtu.py` | Estimación de compra: uso histórico, esperanza y varianza exactas, calibración, backtest (RF-21, RF-22) | estimación, supuestos | [HECHO] |
 | `tests/referencia_pgmpy.py` | Versión del grafo con pgmpy, **solo** para verificar en los tests que las fórmulas dan lo mismo | pgmpy | [HECHO] |
 | `servicio_rtu.py` | Modelo en memoria con invalidación por ETag; arma la respuesta (T5.4, T5.5) | todos los anteriores, R2 | [HECHO] |
-| `tests/` , `pytest.ini`, `requirements-dev.txt` | 41 tests automáticos (`requirements-dev.txt` incluye pgmpy solo para el test de referencia) | — | [HECHO] |
+| `tests/` , `pytest.ini`, `requirements-dev.txt` | 46 tests automáticos (`requirements-dev.txt` incluye pgmpy solo para el test de referencia) | — | [HECHO] |
 
 Entran en la imagen Docker: `supuestos_protocolo`, `markov_rtu`, `estimacion_rtu`, `esquema_rtu`, `explicacion_rtu`, `servicio_rtu` y `compras_rtu`. Quedan afuera las herramientas offline (`generar_datos_rtu`, `evaluar_rtu`, `fase4_rtu`, `tests/`).
 
@@ -609,11 +610,29 @@ Parado en la semana 104, pronóstico de las 52 semanas siguientes con datos hast
 - 41 tests pasan (nuevo: la API no expone rutas legacy).
 - Desplegado en Render (commit `72a719a`): la imagen nueva construye y arranca bien; `/health` ya no informa `excel_cargado` y el primer `/health` dispara el entrenamiento como antes. [PENDIENTE] anotar el tiempo de build para compararlo con los anteriores.
 
-### 12.13 Hallazgos para el informe
+### 12.13 Fase 8: personalización con la historia del ojo (2026-09-24, local)
+
+Modelo: `logit P(activo) = logit p_grafo + d`, con d propio de cada ojo, `d ~ Normal(0, τ²)` antes de verlo, y posterior de d por regla de Bayes sobre una grilla (−4 a 4, paso 0.1). τ estimado por máxima verosimilitud marginal en los ojos de entrenamiento.
+
+- τ estimado: **0.45** (datos de entrenamiento y también con datos hasta la semana 104). Un test verifica que el método recupera τ = 0.7 en datos donde se conoce.
+- **Predicción de controles futuros del mismo ojo** (test, 10.596 controles): Brier 0.2305 personalizado contra 0.2326 del grafo, **mejora de 0.9%**, pareja según la cantidad de controles previos (0.5% a 1.1%). Esta medición se puede repetir con datos reales.
+- **Compra, pronóstico a ciegas desde la semana 104** (sesgo contra la esperanza verdadera):
+
+| Fármaco | Sin personalizar | Mezcla sobre el prior | Con la historia del ojo |
+|---|---|---|---|
+| FarmacoA | −3.7% | −3.2% | −4.3% |
+| FarmacoB | −4.9% | −3.8% | −2.0% |
+| FarmacoC | −5.3% | −3.9% | −0.8% |
+
+  Total de los tres: −4.3% sin personalizar, −3.1% con la historia. El desvío sigue subestimado, así que la calibración de RF-22 sigue siendo necesaria.
+- **Límite estructural:** d desplaza la actividad de todos los fármacos en la misma dirección, así que casi no cambia qué fármaco conviene probar; la parte de la respuesta propia de cada fármaco solo se observa probándolo. La brecha de ~2 inyecciones de la sección 12.4 **no** se reduce con este método.
+
+### 12.14 Hallazgos para el informe
 
 1. **Maldición de la dimensionalidad:** la red completa rinde peor que no usar covariables; la factorizada es la mejor prediciendo visitas.
 2. **Sesgo de selección:** sin estratificar por línea, FarmacoC queda subestimado y el ranking se degrada.
 3. **Significancia no es relevancia:** la dependencia entre fármacos es muy significativa, pero corregirla casi no cambia las decisiones porque pocos ojos llegan a la segunda posición (P(switch) ≈ 5-10%).
+8. **La historia del ojo mejora el pronóstico, no la elección:** mejora 0.9% la predicción de controles y casi elimina el sesgo de compra de los fármacos de rescate (B: −4.9% → −2.0%; C: −5.3% → −0.8%), pero no cambia qué fármaco probar (12.13).
 4. **Techo de personalización bajo:** solo con covariables se acierta el mejor fármaco en ~60% de los ojos; queda una brecha de ~2 inyecciones por ojo hasta el oráculo, atribuible a la respuesta individual del ojo.
 5. **Estratificar a mano no escala:** el Camino A con covariables rinde peor que el orden poblacional en la evaluación de políticas.
 6. **El grafo es probabilidad clásica:** calculado con conteos y la regla de Bayes, da exactamente lo mismo que una librería especializada y es 40 veces más rápido.
@@ -720,7 +739,9 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 | T7.6 | `api-vacunas` está en desuso: archivar el repo en GitHub y suspender o borrar su servicio en Render para evitar confusiones | [PENDIENTE] (desde la cuenta del usuario) |
 | T7.7 | Retirar los endpoints legacy: decidido y hecho (ADR-19) | [HECHO] |
 
-### Fase 8: personalización con la historia del ojo [PENDIENTE, opcional]
+### Fase 8: personalización con la historia del ojo [HECHO como análisis; integración A DECIDIR]
+
+Resultados en la sección 12.13. Integrarla a producción implicaría: (a) en la compra, personalizar cada ojo en tratamiento con su historia, lo que multiplica por ~5 el cálculo (también el de la calibración); (b) en la recomendación, que el médico cargue los controles previos del ojo, algo que el formulario hoy no pide.
 
 **Objetivo:** reducir la brecha de ~2 inyecciones hasta el oráculo usando las visitas ya observadas del propio ojo (por ejemplo, un posterior por ojo o un modelo jerárquico). Criterio de aceptación: mejora medible sobre "B por línea" en `fase4_rtu.py`, fuera del error de simulación.
 
@@ -728,7 +749,7 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 
 **Informe para equipos de retina [HECHO]** (2026-09-24): `Informe_herramienta_intravitreo.docx` y su PDF, 10 páginas. Público: médicos de una unidad de retina. Contenido: resumen, problema clínico, qué hace la herramienta (con capturas), cómo calcula en lenguaje clínico, validación con datos simulados (cifras de las secciones 12.4 y 12.8), hallazgos, limitaciones, tabla de supuestos a validar con el equipo clínico, próximos pasos y glosario. No incluye las fotos de RetinApp (datos de una paciente real). Presentación: [PENDIENTE].
 
-Escribir los hallazgos de la sección 12.13, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
+Escribir los hallazgos de la sección 12.14, las limitaciones (sección 14) y el trabajo futuro. Mostrar un ejemplo de recomendación con su explicación por casos similares. Incluir el mapeo "modelo de vacunas → caso RTU" y el lema generalizado (sección 7.2).
 
 ### Trabajo futuro (fuera de alcance)
 
@@ -912,3 +933,4 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-24 | Fase 7 desplegada en Render (commit `72a719a`): el servicio solo expone RTU. |
 | 2026-09-24 | Fase 9: informe en Word/PDF para equipos de retina. |
 | 2026-09-24 | Revisión de consistencia del README: estados de RF-11, RF-12, RF-21 y RNF-11 al día; frontend y Q-01 actualizados; contrato sin `beta`; encabezado de tabla huérfano en la fase 6. |
+| 2026-09-24 | Fase 8 como análisis: `personalizacion_rtu.py` (Bayes sobre grilla por ojo, τ por Bayes empírico). Mejora 0.9% la predicción de controles y reduce el sesgo de compra de los fármacos de rescate; no cambia la elección del fármaco. 46 tests. Integración a producción a decidir. |
