@@ -8,7 +8,7 @@ const configurada = import.meta.env.VITE_API_URL as string | undefined;
 if (!configurada) {
   console.warn(`VITE_API_URL no está definida en la compilación; se usa ${API_POR_DEFECTO}.`);
 }
-const BASE = (configurada ?? API_POR_DEFECTO).replace(/\/$/, "");
+const BASE = (configurada || API_POR_DEFECTO).replace(/\/$/, "");
 
 export class ErrorApi extends Error {
   constructor(public estado: number, public detalles: string[], public ruta = "") {
@@ -31,7 +31,7 @@ const CAMPOS: Record<string, string> = {
  *  - 422 de Pydantic: lista de {loc, msg}
  *  - errores del Excel: {mensaje, errores: [...]}
  *  - resto: un texto */
-function detallesDeError(detail: unknown): string[] {
+export function detallesDeError(detail: unknown): string[] {
   if (Array.isArray(detail)) {
     return detail.map((d: { loc?: (string | number)[]; msg?: string }) => {
       const campo = d.loc?.filter((x) => x !== "body").at(-1);

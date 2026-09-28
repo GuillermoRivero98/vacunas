@@ -719,7 +719,7 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 | T6.1 | Formulario del paciente: diagnóstico, tipo de MNV (solo DMRE), edad, antecedentes con opción «Sin dato», fármacos ya recibidos, prioridad | Edad entre 18 y 110; con EMD fija diabetes = Sí; si se probaron todos los fármacos, no deja enviar | [HECHO] |
 | T6.2 | Resultado: fármacos en orden, probabilidad de estabilizarse, banda de desenlaces (estable, cambio, abandono), inyecciones y años esperados, valor de la secuencia, avisos y supuestos | Legible en escritorio y celular (capturas a 1280 y 390 px) | [HECHO] |
 | T6.3 | Explicación: tratamientos con cada fármaco entre los 100 ojos más parecidos, actividad observada frente a estimada, y los casos más parecidos con su evolución | En la misma pantalla del resultado | [HECHO] |
-| T6.4 | Traducir los errores de la API: 422 de Pydantic (`detail` es una lista), errores del Excel (`mensaje` y `errores`), falta de conexión y tiempo de espera agotado | Mensajes legibles, sin romperse | [HECHO] (sin tests automáticos del frontend) |
+| T6.4 | Traducir los errores de la API: 422 de Pydantic (`detail` es una lista), errores del Excel (`mensaje` y `errores`), falta de conexión y tiempo de espera agotado | Mensajes legibles, sin romperse | [HECHO] con tests automáticos (Vitest, 29 tests en frontend/src/*.test.ts) |
 | T6.5 | Deploy en Cloudflare Pages, probar CORS desde ese dominio y restringir con `FRONTEND_ORIGINS` | La página publicada calcula un plan y una compra | [HECHO] publicado y funcionando; `FRONTEND_ORIGINS` configurado y verificado (sección 12.11) |
 | T6.8 | Si falta la configuración de la API, usar la dirección de Render y avisar en la consola; si el servidor responde 404 (versión vieja sin el endpoint), explicarlo en lugar de quedarse en "Conectando" | Probado con un servidor simulado sin `/rtu/info` | [HECHO] |
 | T6.6 | Pantalla de compra: período, probabilidad de que alcance y ojos nuevos por semana; tabla con compra, uso esperado, rango, origen de la demanda y uso histórico; cómo se calculó con los backtests | Coincide con `/rtu/estimacion-compra` | [HECHO] |
@@ -844,7 +844,7 @@ python -W ignore fase4_rtu.py --replicas 10   # ~6 veces más rápido, con más 
 
 ```powershell
 pip install -r requirements-dev.txt
-python -m pytest -q                                   # 41 tests
+python -m pytest -q                                   # 46 tests
 python compras_rtu.py                                 # backtest y estimación de compra
 $env:RTU_HISTORICO_LOCAL = "historico_rtu_SIMULADO.xlsx"
 uvicorn api:app --reload                              # abrir http://127.0.0.1:8000/docs
@@ -861,7 +861,10 @@ cd frontend
 npm install
 npm run dev              # http://localhost:5173, usa la API local (frontend/.env.development)
 npm run build            # compila a frontend/dist con la API de Render (frontend/.env.production)
+npm test                 # tests de la lógica pura (Vitest): api.ts y formato.ts
 ```
+
+Los tests (`frontend/src/*.test.ts`) quedan excluidos del `tsc -b` del build (`exclude` en `tsconfig.json`) y Cloudflare Pages no los corre: se corren a mano antes de cada push que toque el frontend. Los de `formato.ts` dependen del formato es-UY, que requiere un Node con ICU completo (las versiones oficiales lo traen).
 
 Para probar en local, levantar antes la API (sección 16.4).
 
@@ -934,3 +937,4 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-24 | Fase 9: informe en Word/PDF para equipos de retina. |
 | 2026-09-24 | Revisión de consistencia del README: estados de RF-11, RF-12, RF-21 y RNF-11 al día; frontend y Q-01 actualizados; contrato sin `beta`; encabezado de tabla huérfano en la fase 6. |
 | 2026-09-24 | Fase 8 como análisis: `personalizacion_rtu.py` (Bayes sobre grilla por ojo, τ por Bayes empírico). Mejora 0.9% la predicción de controles y reduce el sesgo de compra de los fármacos de rescate; no cambia la elección del fármaco. 46 tests. Integración a producción a decidir. |
+| 2026-09-28 | Tests automáticos del frontend con Vitest 2.1.9: 29 tests sobre api.ts (traducción de errores 422/400/503/500, 404, sin conexión, tiempo de espera, dirección de la API) y formato.ts. Corregido: con VITE_API_URL vacía se pedía a rutas relativas. Tests excluidos del build. |
