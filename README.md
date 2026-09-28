@@ -115,7 +115,7 @@ El sistema empezó como un "optimizador de orden de vacunación" (esquema *legac
 | RF-13 | Validar el esquema del Excel RTU al subirlo y rechazar con mensaje claro si no cumple. | [HECHO] |
 | RF-14 | Frontend: formulario del paciente, recomendación con explicación y pantalla de compra. | [HECHO] publicado en https://vacunas.pages.dev |
 | RF-15 | Excluir fármacos ya probados y calcular la línea a partir de ellos. | [HECHO] |
-| RF-16 | Reporte PDF del resultado RTU. | [PENDIENTE] Opcional |
+| RF-16 | Reporte PDF del resultado RTU. | [HECHO] reporte imprimible desde el navegador (botón "Imprimir o guardar como PDF"), sin dependencias ni carga en Render (ADR-19) |
 | RF-17 | Personalizar `p_activo` con la historia observada del propio ojo. | [HECHO] como análisis offline (`personalizacion_rtu.py`, sección 12.13); integración a producción [A DECIDIR] |
 | RF-18 | Resumen en lenguaje natural por LLM con reglas de *grounding* (P1). | [PENDIENTE] Opcional, sin decidir |
 | RF-19 | **Explicación por casos similares:** junto con cada recomendación, mostrar en qué casos históricos se basa: cuántos casos parecidos hubo por fármaco, cómo les fue (estable / switch / abandono, inyecciones) y un listado de los N casos más parecidos con sus características y su evolución. | [HECHO] |
@@ -638,6 +638,12 @@ Modelo: `logit P(activo) = logit p_grafo + d`, con d propio de cada ojo, `d ~ No
 6. **El grafo es probabilidad clásica:** calculado con conteos y la regla de Bayes, da exactamente lo mismo que una librería especializada y es 40 veces más rápido.
 7. **Promediar no alcanza para planificar compras:** la heterogeneidad entre pacientes sesga la esperanza (Jensen) y subestima la varianza; calibrar con backtests del propio histórico lo corrige, y la compra calibrada al 95% alcanzó en la validación.
 
+### 12.15 Reporte PDF (2026-09-28, local)
+
+- Probado de punta a punta con Chromium y una API simulada: el PDF sale en A4 con fondos desactivados (valor por defecto de los navegadores) y las bandas y trayectorias se imprimen en color gracias a `print-color-adjust: exact`; el desplegable de supuestos se imprime abierto; 2 páginas para 5 casos parecidos.
+- Defectos encontrados y corregidos en la prueba: (1) Chromium superponía el último caso con los supuestos al partir entre páginas un contenedor grid; en el impreso esos contenedores pasan a bloques. (2) Si `beforeprint` llegaba dos veces, el título y el desplegable no se restauraban. (3) El pie de la aplicación ocupaba una tercera página repitiendo avisos que el reporte ya tiene; se oculta al imprimir un plan.
+- Pendiente: probarlo en un navegador real con la API de Render (sección 12.15, verificación manual).
+
 ---
 
 ## 13. Hoja de ruta
@@ -719,9 +725,10 @@ Aplicación React + TypeScript (Vite) en `frontend/` (ADR-18). Dos pestañas: **
 | T6.1 | Formulario del paciente: diagnóstico, tipo de MNV (solo DMRE), edad, antecedentes con opción «Sin dato», fármacos ya recibidos, prioridad | Edad entre 18 y 110; con EMD fija diabetes = Sí; si se probaron todos los fármacos, no deja enviar | [HECHO] |
 | T6.2 | Resultado: fármacos en orden, probabilidad de estabilizarse, banda de desenlaces (estable, cambio, abandono), inyecciones y años esperados, valor de la secuencia, avisos y supuestos | Legible en escritorio y celular (capturas a 1280 y 390 px) | [HECHO] |
 | T6.3 | Explicación: tratamientos con cada fármaco entre los 100 ojos más parecidos, actividad observada frente a estimada, y los casos más parecidos con su evolución | En la misma pantalla del resultado | [HECHO] |
-| T6.4 | Traducir los errores de la API: 422 de Pydantic (`detail` es una lista), errores del Excel (`mensaje` y `errores`), falta de conexión y tiempo de espera agotado | Mensajes legibles, sin romperse | [HECHO] con tests automáticos (Vitest, 29 tests en frontend/src/*.test.ts) |
+| T6.4 | Traducir los errores de la API: 422 de Pydantic (`detail` es una lista), errores del Excel (`mensaje` y `errores`), falta de conexión y tiempo de espera agotado | Mensajes legibles, sin romperse | [HECHO] con tests automáticos (Vitest, 38 tests en frontend/src/*.test.ts) |
 | T6.5 | Deploy en Cloudflare Pages, probar CORS desde ese dominio y restringir con `FRONTEND_ORIGINS` | La página publicada calcula un plan y una compra | [HECHO] publicado y funcionando; `FRONTEND_ORIGINS` configurado y verificado (sección 12.11) |
 | T6.8 | Si falta la configuración de la API, usar la dirección de Render y avisar en la consola; si el servidor responde 404 (versión vieja sin el endpoint), explicarlo en lugar de quedarse en "Conectando" | Probado con un servidor simulado sin `/rtu/info` | [HECHO] |
+| T6.9 | Reporte PDF de la recomendación (RF-16) con @media print y window.print(): datos del paciente usados en el cálculo, fecha de la consulta, modelo usado, orden con bandas, base del cálculo, casos parecidos, supuestos y avisos | Probado con Chromium sin fondos: bandas en color, supuestos visibles, 2 páginas A4, título y desplegable restaurados después | [HECHO] |
 | T6.6 | Pantalla de compra: período, probabilidad de que alcance y ojos nuevos por semana; tabla con compra, uso esperado, rango, origen de la demanda y uso histórico; cómo se calculó con los backtests | Coincide con `/rtu/estimacion-compra` | [HECHO] |
 | T6.7 | Estado del servidor: al abrir consulta `/health` (despierta Render y dispara el precalentamiento) hasta que el modelo está listo | Muestra «Listo» sin intervención | [HECHO] |
 
@@ -938,3 +945,4 @@ Si un deploy falla, Render sigue sirviendo la versión anterior. Revisar el log 
 | 2026-09-24 | Revisión de consistencia del README: estados de RF-11, RF-12, RF-21 y RNF-11 al día; frontend y Q-01 actualizados; contrato sin `beta`; encabezado de tabla huérfano en la fase 6. |
 | 2026-09-24 | Fase 8 como análisis: `personalizacion_rtu.py` (Bayes sobre grilla por ojo, τ por Bayes empírico). Mejora 0.9% la predicción de controles y reduce el sesgo de compra de los fármacos de rescate; no cambia la elección del fármaco. 46 tests. Integración a producción a decidir. |
 | 2026-09-28 | Tests automáticos del frontend con Vitest 2.1.9: 29 tests sobre api.ts (traducción de errores 422/400/503/500, 404, sin conexión, tiempo de espera, dirección de la API) y formato.ts. Corregido: con VITE_API_URL vacía se pedía a rutas relativas. Tests excluidos del build. |
+| 2026-09-28 | RF-16: reporte PDF de la recomendación desde el navegador (T6.9), sin dependencias nuevas. 38 tests del frontend. Se quitó del repo APLICAR_tests_frontend.md, commiteado por error. |

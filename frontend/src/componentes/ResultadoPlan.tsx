@@ -1,17 +1,75 @@
-import type { Plan } from "../tipos";
-import { comorbilidades, desenlace, nombreFarmaco, num, pct, subtipo } from "../formato";
+import { useEffect, useRef } from "react";
+import type { Plan, SolicitudPlan } from "../tipos";
+import { comorbilidades, datosPaciente, desenlace, fechaHora, nombreArchivoPlan, nombreFarmaco, num, pct, subtipo } from "../formato";
 import { BandaDesenlaces } from "./BandaDesenlaces";
 import { Aviso } from "./Aviso";
 
 const ADVERTENCIA_MEDICO = "La decisión final es del médico tratante.";
 
-export function ResultadoPlan({ plan }: { plan: Plan }) {
+interface Props {
+  plan: Plan;
+  /** La solicitud con la que se calculó este plan (la API no la repite). */
+  solicitud: SolicitudPlan;
+  /** Cuándo se hizo la consulta; va en el reporte impreso. */
+  consultadoEn: Date;
+}
+
+export function ResultadoPlan({ plan, solicitud, consultadoEn }: Props) {
   const [primero] = plan.orden_sugerido;
   const m1 = plan.por_farmaco.find((f) => f.farmaco === primero)!;
   const avisos = plan.advertencias.filter((a) => a !== ADVERTENCIA_MEDICO);
+  const raiz = useRef<HTMLElement>(null);
+  const supuestos = useRef<HTMLDetailsElement>(null);
+
+  // Al imprimir (con el botón o con Ctrl+P) se abre el desplegable de supuestos,
+  // que cerrado no se imprime, y el título de la página pasa a ser el nombre
+  // del archivo que propone el navegador al guardar como PDF. Después se restaura.
+  useEffect(() => {
+    let tituloPrevio = "";
+    let estabaAbierto = false;
+    const antes = () => {
+      if (!raiz.current || raiz.current.offsetParent === null) return; // pestaña Compras: no es este reporte
+      if (tituloPrevio) return; // ya preparado (beforeprint puede llegar dos veces)
+      tituloPrevio = document.title;
+      document.title = nombreArchivoPlan(consultadoEn);
+      estabaAbierto = supuestos.current?.open ?? false;
+      if (supuestos.current) supuestos.current.open = true;
+      document.body.classList.add("imprimiendo-plan");
+    };
+    const despues = () => {
+      if (!tituloPrevio) return;
+      document.title = tituloPrevio;
+      tituloPrevio = "";
+      if (supuestos.current) supuestos.current.open = estabaAbierto;
+      document.body.classList.remove("imprimiendo-plan");
+    };
+    window.addEventListener("beforeprint", antes);
+    window.addEventListener("afterprint", despues);
+    return () => {
+      window.removeEventListener("beforeprint", antes);
+      window.removeEventListener("afterprint", despues);
+    };
+  }, [consultadoEn]);
 
   return (
-    <section className="resultado" aria-live="polite">
+    <section className="resultado" aria-live="polite" ref={raiz}>
+      <header className="impreso solo-impresion">
+        <p className="impreso__titulo">Plan de tratamiento intravítreo</p>
+        <p>
+          Consulta del {fechaHora(consultadoEn)}. Modelo entrenado el {fechaHora(new Date(plan.version_modelo.entrenado_en))} con
+          un histórico de {num(plan.version_modelo.pacientes)} pacientes, {num(plan.version_modelo.ojos)} ojos
+          y {num(plan.version_modelo.visitas)} visitas.
+        </p>
+        <p className="impreso__subtitulo">Datos del paciente usados en el cálculo</p>
+        <dl className="supuestos">
+          {datosPaciente(solicitud).map((d) => (
+            <div key={d.etiqueta} className="supuestos__fila">
+              <dt>{d.etiqueta}</dt><dd>{d.valor}</dd>
+            </div>
+          ))}
+        </dl>
+      </header>
+
       <header className="resultado__encabezado">
         <h2>Probar primero {nombreFarmaco(primero)}</h2>
         <p className="resultado__bajada">
@@ -121,7 +179,7 @@ export function ResultadoPlan({ plan }: { plan: Plan }) {
         </ul>
       </section>
 
-      <details className="desplegable">
+      <details className="desplegable" ref={supuestos}>
         <summary>Supuestos del protocolo usados en el cálculo</summary>
         <dl className="supuestos">
           <dt>Carga</dt><dd>{plan.supuestos.dosis_carga} dosis cada {plan.supuestos.intervalo_carga_semanas} semanas</dd>
@@ -133,6 +191,17 @@ export function ResultadoPlan({ plan }: { plan: Plan }) {
           <dt>Abandono</dt><dd>{pct(plan.supuestos.prob_abandono_por_visita)} por visita</dd>
         </dl>
       </details>
+
+      <p className="impreso__cierre solo-impresion">
+        {ADVERTENCIA_MEDICO} Herramienta de apoyo a la decisión: estima probabilidades a partir del histórico y
+        de supuestos del protocolo que no fueron validados clínicamente.
+      </p>
+
+      <div className="no-imprimir">
+        <button type="button" className="boton boton--secundario" onClick={() => window.print()}>
+          Imprimir o guardar como PDF
+        </button>
+      </div>
     </section>
   );
 }

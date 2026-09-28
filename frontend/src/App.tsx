@@ -14,13 +14,21 @@ type EstadoServidor =
 
 type Pestana = "paciente" | "compras";
 
+/** Un plan junto con la solicitud que lo produjo y el momento de la consulta
+ *  (para el reporte impreso: la API no repite los datos del paciente). */
+interface Consulta {
+  plan: Plan;
+  solicitud: SolicitudPlan;
+  en: Date;
+}
+
 const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const mensajes = (e: unknown) => (e instanceof ErrorApi ? e.detalles : ["Ocurrió un error inesperado."]);
 
 export default function App() {
   const [servidor, setServidor] = useState<EstadoServidor>({ fase: "conectando" });
   const [pestana, setPestana] = useState<Pestana>("paciente");
-  const [plan, setPlan] = useState<Plan | null>(null);
+  const [consulta, setConsulta] = useState<Consulta | null>(null);
   const [errorPlan, setErrorPlan] = useState<string[]>([]);
   const [calculandoPlan, setCalculandoPlan] = useState(false);
   const [compra, setCompra] = useState<Compra | null>(null);
@@ -77,7 +85,8 @@ export default function App() {
     setCalculandoPlan(true);
     setErrorPlan([]);
     try {
-      setPlan(await api.plan(s));
+      const plan = await api.plan(s);
+      setConsulta({ plan, solicitud: s, en: new Date() });
     } catch (e) {
       setErrorPlan(mensajes(e));
     } finally {
@@ -133,7 +142,9 @@ export default function App() {
             habilitado={listo} onCalcular={calcularPlan} />
           <div className="panel-paciente__resultado">
             <Aviso tipo="error" titulo="No se pudo calcular el plan" items={errorPlan} />
-            {plan ? <ResultadoPlan plan={plan} /> : !errorPlan.length && (
+            {consulta ? (
+              <ResultadoPlan plan={consulta.plan} solicitud={consulta.solicitud} consultadoEn={consulta.en} />
+            ) : !errorPlan.length && (
               <p className="vacio">Completá los datos del paciente y calculá el plan para ver qué fármaco probar primero y en qué casos se apoya la sugerencia.</p>
             )}
           </div>

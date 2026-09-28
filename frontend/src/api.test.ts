@@ -1,4 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SolicitudCompra, SolicitudPlan } from "./tipos";
+
+const SOLICITUD: SolicitudPlan = {
+  diagnostico: "EMD", edad: 70, farmacos_ya_probados: [], objetivo: "estable", n_casos_similares: 5,
+};
+const COMPRA: SolicitudCompra = { horizonte_semanas: 52, nivel_servicio: 0.95, nuevos_ojos_por_semana: 0 };
 
 // api.ts calcula la dirección de la API al importarse, a partir de
 // VITE_API_URL. Cada prueba fija la variable y vuelve a importar el módulo.
@@ -102,19 +108,19 @@ describe("pedidos a la API", () => {
   it("respuesta correcta: envía JSON por POST y devuelve el cuerpo", async () => {
     const { api } = await cargarApi(BASE);
     fetchFalso.mockResolvedValue(respuesta(200, { orden_sugerido: ["FarmacoB"] }));
-    const plan = await api.plan({ diagnostico: "EMD", edad: 70 });
+    const plan = await api.plan(SOLICITUD);
     expect(plan).toEqual({ orden_sugerido: ["FarmacoB"] });
     const [url, opciones] = fetchFalso.mock.calls[0];
     expect(url).toBe(`${BASE}/rtu/sugerir-plan`);
     expect(opciones.method).toBe("POST");
     expect(opciones.headers["Content-Type"]).toBe("application/json");
-    expect(JSON.parse(opciones.body)).toEqual({ diagnostico: "EMD", edad: 70 });
+    expect(JSON.parse(opciones.body)).toEqual(SOLICITUD);
   });
 
   it("422: ErrorApi con el estado, la ruta y los mensajes traducidos", async () => {
     const { api, ErrorApi } = await cargarApi(BASE);
     fetchFalso.mockResolvedValue(respuesta(422, { detail: [{ loc: ["body", "edad"], msg: "fuera de rango" }] }));
-    const error = await api.plan({}).catch((e) => e);
+    const error = await api.plan(SOLICITUD).catch((e) => e);
     expect(error).toBeInstanceOf(ErrorApi);
     expect(error.estado).toBe(422);
     expect(error.ruta).toBe("/rtu/sugerir-plan");
@@ -125,7 +131,7 @@ describe("pedidos a la API", () => {
   it("400 del Excel y 503 sin histórico: pasan el detalle tal cual", async () => {
     const { api } = await cargarApi(BASE);
     fetchFalso.mockResolvedValueOnce(respuesta(400, { detail: { mensaje: "Excel inválido", errores: ["Falta ojo"] } }));
-    await expect(api.plan({})).rejects.toMatchObject({ estado: 400, detalles: ["Excel inválido", "Falta ojo"] });
+    await expect(api.plan(SOLICITUD)).rejects.toMatchObject({ estado: 400, detalles: ["Excel inválido", "Falta ojo"] });
     fetchFalso.mockResolvedValueOnce(respuesta(503, { detail: "No hay histórico RTU cargado." }));
     await expect(api.info()).rejects.toMatchObject({ estado: 503, detalles: ["No hay histórico RTU cargado."] });
   });
@@ -187,7 +193,7 @@ describe("pedidos a la API", () => {
       return new Promise(() => {});
     });
     void api.salud();    // 120 s
-    void api.compra({}); // 300 s
+    void api.compra(COMPRA); // 300 s
     await vi.advanceTimersByTimeAsync(119_999);
     expect(señales.map((s) => s.aborted)).toEqual([false, false]);
     await vi.advanceTimersByTimeAsync(1);

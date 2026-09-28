@@ -223,3 +223,57 @@ input[aria-invalid="true"] { border-color: var(--error); }
 @media (prefers-reduced-motion: reduce) {
   .estado__punto { animation: none !important; }
 }
+
+/* ---------- Reporte impreso de una recomendación (RF-16) ----------
+   El botón "Imprimir o guardar como PDF" usa el diálogo del navegador:
+   sin dependencias nuevas y sin carga en el servidor (ADR-19). */
+.solo-impresion { display: none; }
+.supuestos__fila { display: contents; }
+.boton--secundario { background: var(--hoja); color: var(--accion); border: 1px solid var(--accion); }
+.boton--secundario:hover:not(:disabled) { background: var(--nota-fondo); }
+
+@media print {
+  @page { size: A4; margin: 14mm 13mm 16mm; }
+  :root { font-size: 10.5pt; }
+  body { background: #fff; }
+  .app { max-width: none; padding: 0; }
+
+  /* Solo el resultado: sin navegación, formulario, estado ni controles */
+  .cabecera, .pestanas, .formulario, .no-imprimir,
+  .panel-paciente__resultado > .aviso--error { display: none !important; }
+  .solo-impresion { display: block; }
+  .panel-paciente { display: block; }
+  .resultado { padding: 0; gap: 1.1rem; border-radius: 0; }
+  .pie { margin-top: 1.25rem; }
+  /* En el reporte de un plan, sus avisos ya están en el cierre y en los avisos del plan */
+  .imprimiendo-plan .pie { display: none; }
+
+  .impreso { display: grid; gap: 0.5rem; padding-bottom: 0.9rem; border-bottom: 2px solid var(--tinta); }
+  .impreso__titulo { font-size: var(--t-3); font-weight: 700; }
+  .impreso__subtitulo { font-weight: 700; margin-top: 0.35rem; }
+  .impreso__cierre { font-size: var(--t-chico); padding-top: 0.6rem; border-top: 1px solid var(--linea); }
+
+  /* Sin esto los navegadores no imprimen fondos y la banda sale vacía */
+  .banda__tramo, .banda__dato::before, .tramo, .aviso {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Supuestos siempre visibles (el componente abre el desplegable al imprimir) */
+  .desplegable summary { list-style: none; cursor: default; }
+  .desplegable summary::-webkit-details-marker { display: none; }
+
+  /* Que nada quede partido entre dos páginas */
+  .ranking__item, .caso, .tabla tr, .aviso, .impreso, .desplegable { break-inside: avoid; }
+  h2, h3, .tabla-titulo, .base__titulo { break-after: avoid; }
+  .tabla-marco { overflow: visible; }
+
+  /* Chromium superpone contenido al partir un contenedor grid entre páginas:
+     en el impreso, los contenedores grandes pasan a bloques con márgenes. */
+  .panel-paciente__resultado, .resultado, .base, .casos, .desplegable[open] { display: block; }
+  .resultado > * + *, .base > * + * { margin-top: 1rem; }
+  .casos > * + * { margin-top: 0.8rem; }
+  .desplegable summary { margin-bottom: 0.6rem; }
+  .tabla-titulo { margin-bottom: 0.4rem; }
+  .caso { grid-template-columns: minmax(10rem, 1fr) minmax(0, 2fr); }
+}
